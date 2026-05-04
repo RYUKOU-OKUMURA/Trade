@@ -30,9 +30,11 @@ function getAppConfig() {
 
 function setupTradeSheet() {
   return withDocumentLock_(function() {
-    var sheet = getTradesSheet_();
-    ensureHeader(sheet);
-    setTextFormats(sheet);
+    var sheet = getTradesSheet_({
+      ensureSettings: true,
+      ensureHeader: true,
+      applyFormats: true
+    });
     return {
       ok: true,
       sheetName: sheet.getName(),

@@ -20,15 +20,17 @@ function saveResultImages(tradeId, payload, savedAt) {
 
 function createImageFile(folderId, kind, tradeId, payload, savedAt) {
   var image = validateImagePayload(payload);
-  return createValidatedImageFile_(folderId, kind, tradeId, image, savedAt, 1);
+  var folder = DriveApp.getFolderById(folderId);
+  return createValidatedImageFile_(folder, kind, tradeId, image, savedAt, 1);
 }
 
 function createImageFiles(folderId, kind, tradeId, payload, savedAt) {
   var images = validateImagePayloads(payload);
+  var folder = DriveApp.getFolderById(folderId);
   var savedImages = [];
   try {
     images.forEach(function(image, index) {
-      savedImages.push(createValidatedImageFile_(folderId, kind, tradeId, image, savedAt, index + 1));
+      savedImages.push(createValidatedImageFile_(folder, kind, tradeId, image, savedAt, index + 1));
     });
     return savedImages;
   } catch (e) {
@@ -37,14 +39,13 @@ function createImageFiles(folderId, kind, tradeId, payload, savedAt) {
   }
 }
 
-function createValidatedImageFile_(folderId, kind, tradeId, image, savedAt, index) {
+function createValidatedImageFile_(folder, kind, tradeId, image, savedAt, index) {
   var extension = getExtensionFromMimeType(image.mimeType);
   var timestamp = Utilities.formatDate(savedAt || now_(), TIMEZONE, 'yyyyMMdd_HHmmss');
   var paddedIndex = ('0' + (index || 1)).slice(-2);
   var fileName = kind + '_' + timestamp + '_' + tradeId + '_' + paddedIndex + '.' + extension;
   var bytes = Utilities.base64Decode(image.base64);
   var blob = Utilities.newBlob(bytes, image.mimeType, fileName);
-  var folder = DriveApp.getFolderById(folderId);
   var file = folder.createFile(blob);
   configureImageFileForPreview_(file);
 
@@ -76,22 +77,30 @@ function configureImageFileForPreview_(file) {
   if (!SHARE_IMAGE_FILES_FOR_PREVIEW) {
     return;
   }
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    throw new Error('画像の共有設定に失敗しました。Driveフォルダの権限を確認してください。');
+  }
 }
 
 function getImageInfoFromFileId_(fileId) {
   if (!fileId) {
     return null;
   }
-  var file = DriveApp.getFileById(fileId);
-  configureImageFileForPreview_(file);
-  return {
-    fileId: file.getId(),
-    url: getImageUrl(file),
-    fileName: file.getName(),
-    originalFileName: file.getName(),
-    mimeType: file.getMimeType()
-  };
+  try {
+    var file = DriveApp.getFileById(fileId);
+    configureImageFileForPreview_(file);
+    return {
+      fileId: file.getId(),
+      url: getImageUrl(file),
+      fileName: file.getName(),
+      originalFileName: file.getName(),
+      mimeType: file.getMimeType()
+    };
+  } catch (e) {
+    return null;
+  }
 }
 
 function trashDriveFileQuietly_(fileId) {

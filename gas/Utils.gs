@@ -126,6 +126,9 @@ function validateImagePayload(payload) {
   if (ALLOWED_MIME_TYPES.indexOf(mimeType) === -1) {
     throw new Error('この画像形式は対応していません。iPhoneスクリーンショットはPNGまたはJPEG形式で選択してください。');
   }
+  if (base64.length > Math.ceil(MAX_IMAGE_BYTES * 4 / 3) + 128) {
+    throw new Error('画像サイズが大きすぎます。1枚あたり' + Math.round(MAX_IMAGE_BYTES / 1024 / 1024) + 'MB以内にしてください。');
+  }
 
   return {
     base64: base64,
@@ -161,7 +164,9 @@ function serializeList_(values) {
 
 function withDocumentLock_(callback) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(LOCK_WAIT_MS);
+  if (!lock.tryLock(LOCK_WAIT_MS)) {
+    throw new Error('他の保存処理が続いています。少し待ってからもう一度お試しください。');
+  }
   try {
     return callback();
   } finally {
@@ -173,4 +178,42 @@ function sortTradesNewestFirst_(trades) {
   return trades.sort(function(a, b) {
     return (b.entry_saved_at_timestamp || 0) - (a.entry_saved_at_timestamp || 0);
   });
+}
+
+function getCacheJson_(key) {
+  try {
+    var cached = CacheService.getScriptCache().get(key);
+    return cached ? JSON.parse(cached) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function putCacheJson_(key, value, ttlSeconds) {
+  try {
+    CacheService.getScriptCache().put(key, JSON.stringify(value), ttlSeconds || CACHE_TTL_SECONDS);
+  } catch (e) {
+    // キャッシュ容量超過時も通常処理を優先する。
+  }
+}
+
+function getOrSetCacheJson_(key, builder, ttlSeconds) {
+  var cached = getCacheJson_(key);
+  if (cached !== null) {
+    return cached;
+  }
+  var value = builder();
+  putCacheJson_(key, value, ttlSeconds);
+  return value;
+}
+
+function invalidateTradeCaches_() {
+  try {
+    CacheService.getScriptCache().removeAll([
+      'trade_waiting_v2',
+      'trade_history_v2'
+    ]);
+  } catch (e) {
+    // キャッシュ削除に失敗しても保存結果を優先する。
+  }
 }

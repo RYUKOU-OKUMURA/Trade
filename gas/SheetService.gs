@@ -1,13 +1,22 @@
-function getTradesSheet_() {
+function getTradesSheet_(options) {
+  options = options || {};
   requireConfigured_(SPREADSHEET_ID, 'SPREADSHEET_ID');
   var spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
-  ensureSpreadsheetSettings_(spreadsheet);
+  if (options.ensureSettings) {
+    ensureSpreadsheetSettings_(spreadsheet);
+  }
   var sheet = spreadsheet.getSheetByName(TRADES_SHEET_NAME);
+  var createdSheet = false;
   if (!sheet) {
     sheet = spreadsheet.insertSheet(TRADES_SHEET_NAME);
+    createdSheet = true;
   }
-  ensureHeader(sheet);
-  setTextFormats(sheet);
+  if (createdSheet || options.ensureHeader || sheet.getLastRow() === 0) {
+    ensureHeader(sheet);
+  }
+  if (createdSheet || options.applyFormats) {
+    setTextFormats(sheet);
+  }
   return sheet;
 }
 
@@ -50,7 +59,11 @@ function ensureHeader(sheet) {
 }
 
 function getHeaderMap_(sheet) {
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var lastColumn = sheet.getLastColumn();
+  if (lastColumn < 1) {
+    return {};
+  }
+  var headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
   var map = {};
   headers.forEach(function(header, index) {
     if (header) {
@@ -63,79 +76,79 @@ function getHeaderMap_(sheet) {
 function setTextFormats(sheet) {
   var map = getHeaderMap_(sheet);
   var maxRows = Math.max(sheet.getMaxRows() - 1, 1);
-  TEXT_COLUMNS.forEach(function(header) {
-    if (map[header]) {
-      sheet.getRange(2, map[header], maxRows, 1).setNumberFormat('@');
-    }
-  });
-  DATETIME_COLUMNS.forEach(function(header) {
-    if (map[header]) {
-      sheet.getRange(2, map[header], maxRows, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss');
-    }
-  });
-  if (map.duration_minutes) {
-    sheet.getRange(2, map.duration_minutes, maxRows, 1).setNumberFormat('0');
-  }
-  ['entry_image_count', 'result_image_count'].forEach(function(header) {
-    if (map[header]) {
-      sheet.getRange(2, map[header], maxRows, 1).setNumberFormat('0');
-    }
-  });
+  setColumnNumberFormats_(sheet, map, TEXT_COLUMNS, maxRows, '@');
+  setColumnNumberFormats_(sheet, map, DATETIME_COLUMNS, maxRows, 'yyyy/mm/dd hh:mm:ss');
+  setColumnNumberFormats_(sheet, map, ['duration_minutes', 'entry_image_count', 'result_image_count'], maxRows, '0');
 }
 
 function appendTradeRow(trade) {
-  var sheet = getTradesSheet_();
+  var sheet = getTradesSheet_({ ensureHeader: true });
   var map = getHeaderMap_(sheet);
+  return appendTradeRowToSheet_(sheet, map, trade);
+}
+
+function appendTradeRowToSheet_(sheet, map, trade) {
   var rowIndex = sheet.getLastRow() + 1;
-  var rowValues = buildRowValues_(map, trade, sheet.getLastColumn());
-  var dateTimeValues = takeDateTimeValues_(map, rowValues);
+  var columnCount = sheet.getLastColumn();
+  var rowValues = buildRowValues_(map, trade, columnCount);
   setTradeRowTextFormats_(sheet, map, rowIndex);
   setTradeRowDateTimeFormats_(sheet, map, rowIndex);
-  sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).setValues([rowValues]);
-  setTradeRowDateTimeValues_(sheet, map, rowIndex, dateTimeValues);
-  return mapRowToTrade(sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0], map);
+  setTradeRowNumberFormats_(sheet, map, rowIndex);
+  sheet.getRange(rowIndex, 1, 1, columnCount).setValues([rowValues]);
+  return mapRowToTrade(rowValues, map);
 }
 
 function updateTradeRow(rowIndex, updates) {
-  var sheet = getTradesSheet_();
+  var sheet = getTradesSheet_({ ensureHeader: true });
   var map = getHeaderMap_(sheet);
-  Object.keys(updates).forEach(function(header) {
+  return updateTradeRowInSheet_(sheet, map, rowIndex, updates);
+}
+
+function updateTradeRowInSheet_(sheet, map, rowIndex, updates) {
+  var columnCount = sheet.getLastColumn();
+  var rowRange = sheet.getRange(rowIndex, 1, 1, columnCount);
+  var rowValues = rowRange.getValues()[0];
+  var rowFormulas = rowRange.getFormulas()[0];
+  rowFormulas.forEach(function(formula, index) {
+    if (formula) {
+      rowValues[index] = formula;
+    }
+  });
+  var headers = Object.keys(updates);
+  headers.forEach(function(header) {
     if (!map[header]) {
       throw new Error('列が見つかりません: ' + header);
     }
-    var cell = sheet.getRange(rowIndex, map[header]);
-    if (TEXT_COLUMNS.indexOf(header) !== -1) {
-      cell.setNumberFormat('@');
-    }
-    if (DATETIME_COLUMNS.indexOf(header) !== -1) {
-      cell.setNumberFormat('yyyy/mm/dd hh:mm:ss');
-    }
-    if (isImagePreviewColumn_(header) && updates[header]) {
-      cell.setFormula(updates[header]);
-    } else {
-      cell.setValue(updates[header]);
-    }
+    rowValues[map[header] - 1] = updates[header];
   });
-  return mapRowToTrade(sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0], map);
+  setTradeRowFormatsForHeaders_(sheet, map, rowIndex, headers);
+  rowRange.setValues([rowValues]);
+  return mapRowToTrade(rowValues, map);
 }
 
 function findRowByTradeId(tradeId) {
   var sheet = getTradesSheet_();
   var map = getHeaderMap_(sheet);
+  return findRowByTradeIdInSheet_(sheet, map, tradeId);
+}
+
+function findRowByTradeIdInSheet_(sheet, map, tradeId) {
   if (!map.trade_id || sheet.getLastRow() < 2) {
     return null;
   }
 
-  var values = sheet.getRange(2, map.trade_id, sheet.getLastRow() - 1, 1).getValues();
-  for (var i = 0; i < values.length; i++) {
-    if (String(values[i][0]) === tradeId) {
-      var rowIndex = i + 2;
-      var row = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
-      return {
-        rowIndex: rowIndex,
-        trade: mapRowToTrade(row, map)
-      };
-    }
+  var match = sheet
+    .getRange(2, map.trade_id, sheet.getLastRow() - 1, 1)
+    .createTextFinder(tradeId)
+    .matchEntireCell(true)
+    .findNext();
+  if (match) {
+    var rowIndex = match.getRow();
+    var row = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+    return {
+      rowIndex: rowIndex,
+      trade: mapRowToTrade(row, map)
+    };
   }
   return null;
 }
@@ -148,6 +161,25 @@ function getAllTrades() {
   }
 
   var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  return values.map(function(row) {
+    return mapRowToTrade(row, map);
+  }).filter(function(trade) {
+    return trade.trade_id;
+  });
+}
+
+function getRecentTrades(limit) {
+  var sheet = getTradesSheet_();
+  var map = getHeaderMap_(sheet);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return [];
+  }
+
+  var maxItems = Math.max(Number(limit) || MAX_HISTORY_ITEMS, 1);
+  var rowCount = Math.min(lastRow - 1, maxItems);
+  var startRow = lastRow - rowCount + 1;
+  var values = sheet.getRange(startRow, 1, rowCount, sheet.getLastColumn()).getValues();
   return values.map(function(row) {
     return mapRowToTrade(row, map);
   }).filter(function(trade) {
@@ -282,42 +314,54 @@ function buildRowValues_(map, trade, columnCount) {
   return values;
 }
 
-function takeDateTimeValues_(map, rowValues) {
-  var dateTimeValues = {};
-  DATETIME_COLUMNS.forEach(function(header) {
-    if (map[header]) {
-      dateTimeValues[header] = rowValues[map[header] - 1];
-      rowValues[map[header] - 1] = '';
-    }
-  });
-  return dateTimeValues;
-}
-
 function setTradeRowTextFormats_(sheet, map, rowIndex) {
-  TEXT_COLUMNS.forEach(function(header) {
-    if (map[header]) {
-      sheet.getRange(rowIndex, map[header]).setNumberFormat('@');
-    }
-  });
+  setRowNumberFormatsForHeaders_(sheet, map, rowIndex, TEXT_COLUMNS, '@');
 }
 
 function setTradeRowDateTimeFormats_(sheet, map, rowIndex) {
-  DATETIME_COLUMNS.forEach(function(header) {
-    if (map[header]) {
-      sheet.getRange(rowIndex, map[header]).setNumberFormat('yyyy/mm/dd hh:mm:ss');
-    }
-  });
+  setRowNumberFormatsForHeaders_(sheet, map, rowIndex, DATETIME_COLUMNS, 'yyyy/mm/dd hh:mm:ss');
 }
 
-function setTradeRowDateTimeValues_(sheet, map, rowIndex, dateTimeValues) {
-  DATETIME_COLUMNS.forEach(function(header) {
-    if (!map[header] || !dateTimeValues[header]) {
-      return;
-    }
-    sheet.getRange(rowIndex, map[header]).setValue(dateTimeValues[header]);
-  });
+function setTradeRowNumberFormats_(sheet, map, rowIndex) {
+  setRowNumberFormatsForHeaders_(sheet, map, rowIndex, ['duration_minutes', 'entry_image_count', 'result_image_count'], '0');
 }
 
-function isImagePreviewColumn_(header) {
-  return header === 'entry_image_preview' || header === 'result_image_preview';
+function setTradeRowFormatsForHeaders_(sheet, map, rowIndex, headers) {
+  setRowNumberFormatsForHeaders_(sheet, map, rowIndex, headers.filter(function(header) {
+    return TEXT_COLUMNS.indexOf(header) !== -1;
+  }), '@');
+  setRowNumberFormatsForHeaders_(sheet, map, rowIndex, headers.filter(function(header) {
+    return DATETIME_COLUMNS.indexOf(header) !== -1;
+  }), 'yyyy/mm/dd hh:mm:ss');
+  setRowNumberFormatsForHeaders_(sheet, map, rowIndex, headers.filter(function(header) {
+    return ['duration_minutes', 'entry_image_count', 'result_image_count'].indexOf(header) !== -1;
+  }), '0');
+}
+
+function setColumnNumberFormats_(sheet, map, headers, maxRows, numberFormat) {
+  var ranges = headers.map(function(header) {
+    return map[header] ? columnToLetter_(map[header]) + '2:' + columnToLetter_(map[header]) + (maxRows + 1) : '';
+  }).filter(Boolean);
+  if (ranges.length) {
+    sheet.getRangeList(ranges).setNumberFormat(numberFormat);
+  }
+}
+
+function setRowNumberFormatsForHeaders_(sheet, map, rowIndex, headers, numberFormat) {
+  var ranges = headers.map(function(header) {
+    return map[header] ? columnToLetter_(map[header]) + rowIndex : '';
+  }).filter(Boolean);
+  if (ranges.length) {
+    sheet.getRangeList(ranges).setNumberFormat(numberFormat);
+  }
+}
+
+function columnToLetter_(column) {
+  var letter = '';
+  while (column > 0) {
+    var remainder = (column - 1) % 26;
+    letter = String.fromCharCode(65 + remainder) + letter;
+    column = Math.floor((column - 1) / 26);
+  }
+  return letter;
 }

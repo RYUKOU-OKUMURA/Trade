@@ -1,103 +1,118 @@
 function createEntryTrade(payload) {
-  return withDocumentLock_(function() {
-    var savedAt = now_();
-    var tradeId = generateTradeId(savedAt);
-    var images = saveEntryImages(tradeId, payload, savedAt);
+  var savedAt = now_();
+  var tradeId = generateTradeId(savedAt);
+  var images = saveEntryImages(tradeId, payload, savedAt);
 
-    try {
-      var entryImageColumns = buildImageColumns_('entry', images);
-      var trade = {
-        trade_id: tradeId,
-        status: STATUS_WAITING,
-        entry_saved_at: savedAt,
-        result_saved_at: '',
-        duration_minutes: '',
-        entry_image_url: entryImageColumns.entry_image_url,
-        result_image_url: '',
-        entry_image_preview: entryImageColumns.entry_image_preview,
-        result_image_preview: '',
-        entry_image_urls: entryImageColumns.entry_image_urls,
-        result_image_urls: '',
-        memo: '',
-        limit_value: '',
-        stop_value: '',
-        expected_reach_time: '',
-        created_date: formatDate(savedAt, 'yyyy/MM/dd'),
-        day_of_week: getDayOfWeek(savedAt),
-        entry_image_file_id: entryImageColumns.entry_image_file_id,
-        result_image_file_id: '',
-        entry_image_file_ids: entryImageColumns.entry_image_file_ids,
-        result_image_file_ids: '',
-        entry_image_filename: entryImageColumns.entry_image_filename,
-        result_image_filename: '',
-        entry_image_filenames: entryImageColumns.entry_image_filenames,
-        result_image_filenames: '',
-        entry_image_count: entryImageColumns.entry_image_count,
-        result_image_count: 0,
-        updated_at: savedAt
-      };
-      return appendTradeRow(trade);
-    } catch (e) {
-      trashDriveFilesQuietly_(images);
-      throw e;
-    }
-  });
+  try {
+    var entryImageColumns = buildImageColumns_('entry', images);
+    var trade = {
+      trade_id: tradeId,
+      status: STATUS_WAITING,
+      entry_saved_at: savedAt,
+      result_saved_at: '',
+      duration_minutes: '',
+      entry_image_url: entryImageColumns.entry_image_url,
+      result_image_url: '',
+      entry_image_preview: entryImageColumns.entry_image_preview,
+      result_image_preview: '',
+      entry_image_urls: entryImageColumns.entry_image_urls,
+      result_image_urls: '',
+      memo: '',
+      limit_value: '',
+      stop_value: '',
+      expected_reach_time: '',
+      created_date: formatDate(savedAt, 'yyyy/MM/dd'),
+      day_of_week: getDayOfWeek(savedAt),
+      entry_image_file_id: entryImageColumns.entry_image_file_id,
+      result_image_file_id: '',
+      entry_image_file_ids: entryImageColumns.entry_image_file_ids,
+      result_image_file_ids: '',
+      entry_image_filename: entryImageColumns.entry_image_filename,
+      result_image_filename: '',
+      entry_image_filenames: entryImageColumns.entry_image_filenames,
+      result_image_filenames: '',
+      entry_image_count: entryImageColumns.entry_image_count,
+      result_image_count: 0,
+      updated_at: savedAt
+    };
+    return withDocumentLock_(function() {
+      var sheet = getTradesSheet_({ ensureHeader: true });
+      var map = getHeaderMap_(sheet);
+      var savedTrade = appendTradeRowToSheet_(sheet, map, trade);
+      invalidateTradeCaches_();
+      return savedTrade;
+    });
+  } catch (e) {
+    trashDriveFilesQuietly_(images);
+    throw e;
+  }
 }
 
 function updateEntryFields(payload) {
+  payload = payload || {};
+  var tradeId = validateTradeId(payload.tradeId || payload.trade_id);
+  var fields = validateEntryFields(payload);
   return withDocumentLock_(function() {
-    payload = payload || {};
-    var tradeId = validateTradeId(payload.tradeId || payload.trade_id);
-    var fields = validateEntryFields(payload);
-    var found = findRowByTradeId(tradeId);
+    var sheet = getTradesSheet_({ ensureHeader: true });
+    var map = getHeaderMap_(sheet);
+    var found = findRowByTradeIdInSheet_(sheet, map, tradeId);
     if (!found) {
       throw new Error('対象の記録が見つかりません。');
     }
 
-    return updateTradeRow(found.rowIndex, {
+    var updatedTrade = updateTradeRowInSheet_(sheet, map, found.rowIndex, {
       limit_value: fields.limit_value,
       stop_value: fields.stop_value,
       expected_reach_time: fields.expected_reach_time,
       memo: fields.memo,
       updated_at: now_()
     });
+    invalidateTradeCaches_();
+    return updatedTrade;
   });
 }
 
 function updateMemo(tradeId, memo) {
-  var found = findRowByTradeId(validateTradeId(tradeId));
-  if (!found) {
-    throw new Error('対象の記録が見つかりません。');
-  }
-  return updateEntryFields({
-    tradeId: tradeId,
-    limitValue: found.trade.limit_value,
-    stopValue: found.trade.stop_value,
-    expectedReachTime: found.trade.expected_reach_time,
-    memo: memo
+  var validatedTradeId = validateTradeId(tradeId);
+  var sanitizedMemo = sanitizeMemo(memo);
+  return withDocumentLock_(function() {
+    var sheet = getTradesSheet_({ ensureHeader: true });
+    var map = getHeaderMap_(sheet);
+    var found = findRowByTradeIdInSheet_(sheet, map, validatedTradeId);
+    if (!found) {
+      throw new Error('対象の記録が見つかりません。');
+    }
+    var updatedTrade = updateTradeRowInSheet_(sheet, map, found.rowIndex, {
+      memo: sanitizedMemo,
+      updated_at: now_()
+    });
+    invalidateTradeCaches_();
+    return updatedTrade;
   });
 }
 
 function completeTrade(payload) {
-  return withDocumentLock_(function() {
-    payload = payload || {};
-    var tradeId = validateTradeId(payload.tradeId || payload.trade_id);
-    var found = findRowByTradeId(tradeId);
-    if (!found) {
-      throw new Error('対象の記録が見つかりません。');
-    }
-    if (found.trade.status === STATUS_COMPLETED) {
-      throw new Error('この記録はすでに完了しています。');
-    }
-    if (found.trade.status !== STATUS_WAITING) {
-      throw new Error('結果待ちではない記録です。');
-    }
+  payload = payload || {};
+  var tradeId = validateTradeId(payload.tradeId || payload.trade_id);
+  var savedAt = now_();
+  var images = saveResultImages(tradeId, payload, savedAt);
+  try {
+    var resultImageColumns = buildImageColumns_('result', images);
+    return withDocumentLock_(function() {
+      var sheet = getTradesSheet_({ ensureHeader: true });
+      var map = getHeaderMap_(sheet);
+      var found = findRowByTradeIdInSheet_(sheet, map, tradeId);
+      if (!found) {
+        throw new Error('対象の記録が見つかりません。');
+      }
+      if (found.trade.status === STATUS_COMPLETED) {
+        throw new Error('この記録はすでに完了しています。');
+      }
+      if (found.trade.status !== STATUS_WAITING) {
+        throw new Error('結果待ちではない記録です。');
+      }
 
-    var savedAt = now_();
-    var images = saveResultImages(tradeId, payload, savedAt);
-    try {
-      var resultImageColumns = buildImageColumns_('result', images);
-      return updateTradeRow(found.rowIndex, {
+      var updatedTrade = updateTradeRowInSheet_(sheet, map, found.rowIndex, {
         status: STATUS_COMPLETED,
         result_saved_at: savedAt,
         duration_minutes: calculateDurationMinutes(found.trade.entry_saved_at, savedAt),
@@ -111,23 +126,29 @@ function completeTrade(payload) {
         result_image_count: resultImageColumns.result_image_count,
         updated_at: savedAt
       });
-    } catch (e) {
-      trashDriveFilesQuietly_(images);
-      throw e;
-    }
-  });
+      invalidateTradeCaches_();
+      return updatedTrade;
+    });
+  } catch (e) {
+    trashDriveFilesQuietly_(images);
+    throw e;
+  }
 }
 
 function getWaitingTrades() {
-  var trades = getAllTrades().filter(function(trade) {
-    return trade.status === STATUS_WAITING;
-  });
-  return sortTradesNewestFirst_(trades);
+  return getOrSetCacheJson_('trade_waiting_v2', function() {
+    var trades = getAllTrades().filter(function(trade) {
+      return trade.status === STATUS_WAITING;
+    });
+    return sortTradesNewestFirst_(trades);
+  }, CACHE_TTL_SECONDS);
 }
 
 function getHistory() {
-  var trades = sortTradesNewestFirst_(getAllTrades());
-  return trades.slice(0, MAX_HISTORY_ITEMS);
+  return getOrSetCacheJson_('trade_history_v2', function() {
+    var trades = sortTradesNewestFirst_(getRecentTrades(MAX_HISTORY_ITEMS));
+    return trades.slice(0, MAX_HISTORY_ITEMS);
+  }, CACHE_TTL_SECONDS);
 }
 
 function getTradeById(tradeId) {
@@ -185,10 +206,14 @@ function repairTradeImagePreviews() {
       mergeImageRepairUpdates_(updates, 'entry', trade.entry_image_file_ids);
       mergeImageRepairUpdates_(updates, 'result', trade.result_image_file_ids);
       if (Object.keys(updates).length) {
-        updateTradeRow(rowIndex, updates);
+        updateTradeRowInSheet_(sheet, map, rowIndex, updates);
         repaired++;
       }
     });
+
+    if (repaired) {
+      invalidateTradeCaches_();
+    }
 
     return {
       ok: true,

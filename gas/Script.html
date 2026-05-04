@@ -8,6 +8,10 @@
   const ENTRY_FIELD_PATTERN = /^[A-Za-z0-9.:_\-/+ ]{0,32}$/;
   const MAX_MEMO_LENGTH = 1000;
   const MAX_IMAGES_PER_TRADE = 6;
+  const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+  const GAS_TIMEOUT_MS = 45000;
+  const VIEW_CACHE_TTL_MS = 30000;
+  const SAVE_RETRY_DELAY_MS = 250;
 
   const state = {
     view: 'home',
@@ -16,8 +20,17 @@
     historyTrades: [],
     currentTrade: null,
     pendingSaves: {},
+    saveVersions: {},
+    savingTrades: {},
+    savePromises: {},
     uploading: false,
-    loading: false
+    loading: false,
+    loadingCount: 0,
+    requestSeq: 0,
+    activeRequests: {},
+    loadedViews: { home: false, history: false },
+    dirtyViews: { home: true, history: true },
+    lastLoadedAt: { home: 0, history: 0 }
   };
 
   const DEFAULT_ENTRY_BUTTON_LABEL = 'エントリー画像を保存';
@@ -57,30 +70,41 @@
   }
 
   function bindGlobalEvents() {
-    els.backButton.addEventListener('click', () => {
+    els.backButton.addEventListener('click', async () => {
+      await flushPendingSaves();
       if (state.view === 'detail') {
-        showView(state.previousView === 'history' ? 'history' : 'home');
+        const targetView = state.previousView === 'history' ? 'history' : 'home';
+        showView(targetView);
+        if (targetView === 'history') {
+          loadHistory();
+        } else {
+          loadHome();
+        }
         return;
       }
       showView('home');
+      loadHome();
     });
 
-    els.refreshButton.addEventListener('click', () => {
+    els.refreshButton.addEventListener('click', async () => {
+      await flushPendingSaves();
       if (state.view === 'history') {
-        loadHistory();
+        loadHistory({ force: true });
       } else if (state.view === 'detail' && state.currentTrade) {
         loadDetail(state.currentTrade.trade_id, state.previousView);
       } else {
-        loadHome();
+        loadHome({ force: true });
       }
     });
 
-    els.historyButton.addEventListener('click', () => {
+    els.historyButton.addEventListener('click', async () => {
+      await flushPendingSaves();
       showView('history');
       loadHistory();
     });
 
-    els.homeFromHistoryButton.addEventListener('click', () => {
+    els.homeFromHistoryButton.addEventListener('click', async () => {
+      await flushPendingSaves();
       showView('home');
       loadHome();
     });
@@ -98,45 +122,73 @@
     });
   }
 
-  async function loadHome() {
-    setLoading(true);
+  async function loadHome(options = {}) {
+    if (canUseCachedView('home', options)) {
+      renderWaitingTrades();
+      return;
+    }
+    const requestId = startRequest('home');
+    const stopLoading = beginLoading();
     try {
       const trades = await runGas('getWaitingTrades');
+      if (!isLatestRequest('home', requestId)) return;
       state.waitingTrades = normalizeList(trades);
+      state.loadedViews.home = true;
+      state.dirtyViews.home = false;
+      state.lastLoadedAt.home = Date.now();
       renderWaitingTrades();
     } catch (error) {
+      if (!isLatestRequest('home', requestId)) return;
       showToast(getErrorMessage(error, '結果待ち記録の取得に失敗しました'), true);
     } finally {
-      setLoading(false);
+      stopLoading();
     }
   }
 
-  async function loadHistory() {
-    setLoading(true);
+  async function loadHistory(options = {}) {
+    if (canUseCachedView('history', options)) {
+      renderHistory();
+      return;
+    }
+    if (state.historyTrades.length) {
+      renderHistory();
+    }
+    const requestId = startRequest('history');
+    const stopLoading = beginLoading();
     try {
       const trades = await runGas('getHistory');
+      if (!isLatestRequest('history', requestId)) return;
       state.historyTrades = normalizeList(trades);
+      state.loadedViews.history = true;
+      state.dirtyViews.history = false;
+      state.lastLoadedAt.history = Date.now();
       renderHistory();
     } catch (error) {
+      if (!isLatestRequest('history', requestId)) return;
       showToast(getErrorMessage(error, '履歴の取得に失敗しました'), true);
     } finally {
-      setLoading(false);
+      stopLoading();
     }
   }
 
   async function loadDetail(tradeId, previousView) {
     if (!tradeId) return;
-    setLoading(true);
+    await flushPendingSaves();
+    const requestKey = 'detail';
+    const requestId = startRequest(requestKey);
+    const stopLoading = beginLoading();
     try {
       const trade = await runGas('getTradeById', tradeId);
+      if (!isLatestRequest(requestKey, requestId)) return;
       state.currentTrade = normalizeTrade(trade);
       state.previousView = previousView || state.previousView || 'home';
       showView('detail', state.previousView);
       renderDetail();
     } catch (error) {
+      if (!isLatestRequest(requestKey, requestId)) return;
       showToast(getErrorMessage(error, '詳細の取得に失敗しました'), true);
     } finally {
-      setLoading(false);
+      stopLoading();
     }
   }
 
@@ -150,6 +202,10 @@
       const normalized = normalizeTrade(trade);
       showToast(`エントリー画像${files.length}枚を保存しました`);
       state.waitingTrades = [normalized].concat(state.waitingTrades.filter(item => item.trade_id !== normalized.trade_id));
+      state.loadedViews.home = true;
+      state.dirtyViews.home = false;
+      state.dirtyViews.history = true;
+      state.lastLoadedAt.home = Date.now();
       renderWaitingTrades();
     } catch (error) {
       showToast(getErrorMessage(error, '画像の保存に失敗しました'), true);
@@ -168,6 +224,10 @@
       const normalized = normalizeTrade(trade);
       showToast(`結果画像${files.length}枚を保存しました`);
       state.waitingTrades = state.waitingTrades.filter(item => item.trade_id !== tradeId);
+      state.dirtyViews.history = true;
+      state.loadedViews.home = true;
+      state.dirtyViews.home = false;
+      state.lastLoadedAt.home = Date.now();
       renderWaitingTrades();
       if (state.view === 'detail') {
         state.currentTrade = normalized;
@@ -184,10 +244,11 @@
     const trades = sortTrades(state.waitingTrades);
     els.waitingCount.textContent = `${trades.length}件`;
     els.waitingEmpty.style.display = trades.length ? 'none' : 'grid';
-    els.waitingList.innerHTML = '';
+    const fragment = document.createDocumentFragment();
     trades.forEach((trade) => {
-      els.waitingList.appendChild(createTradeCard(trade, 'home'));
+      fragment.appendChild(createTradeCard(trade, 'home'));
     });
+    replaceContent(els.waitingList, fragment);
   }
 
   function createTradeCard(trade, sourceView) {
@@ -333,42 +394,95 @@
       const value = input.value;
       const validation = validateField(field, value);
       errorEl.textContent = validation.message;
-      if (!validation.ok) return;
-      queueAutoSave(tradeId);
+      if (!validation.ok) {
+        clearPendingSave(tradeId);
+        setSaveState(tradeId, '入力エラー');
+        return;
+      }
+      queueAutoSave(tradeId, undefined, getEditablePayload(tradeId));
     });
 
     input.addEventListener('blur', () => {
       const tradeId = input.dataset.tradeId;
       if (state.pendingSaves[tradeId]) {
-        queueAutoSave(tradeId, 0);
+        queueAutoSave(tradeId, 0, getEditablePayload(tradeId));
       }
     });
   }
 
-  function queueAutoSave(tradeId, delay) {
+  function queueAutoSave(tradeId, delay, payload) {
     if (!tradeId) return;
     const wait = typeof delay === 'number' ? delay : AUTO_SAVE_DELAY_MS;
-    clearTimeout(state.pendingSaves[tradeId]);
+    clearPendingSave(tradeId);
+    const version = (state.saveVersions[tradeId] || 0) + 1;
+    state.saveVersions[tradeId] = version;
     setSaveState(tradeId, '保存待ち');
-    state.pendingSaves[tradeId] = setTimeout(() => saveTradeFields(tradeId), wait);
+    state.pendingSaves[tradeId] = {
+      payload: payload || getEditablePayload(tradeId),
+      version,
+      timer: setTimeout(() => saveTradeFields(tradeId, version), wait)
+    };
   }
 
-  async function saveTradeFields(tradeId) {
-    clearTimeout(state.pendingSaves[tradeId]);
+  function clearPendingSave(tradeId) {
+    const pending = state.pendingSaves[tradeId];
+    if (pending && pending.timer) {
+      clearTimeout(pending.timer);
+    }
     delete state.pendingSaves[tradeId];
+  }
 
-    const payload = getEditablePayload(tradeId);
+  function flushPendingSaves() {
+    const pendingTasks = Object.keys(state.pendingSaves).map((tradeId) => {
+      const pending = state.pendingSaves[tradeId];
+      if (!pending) return null;
+      if (pending.timer) clearTimeout(pending.timer);
+      return saveTradeFields(tradeId, pending.version);
+    }).filter(Boolean);
+    const activeTasks = Object.values(state.savePromises).map(promise => promise.catch(() => undefined));
+    return Promise.all(pendingTasks.concat(activeTasks)).then(() => {
+      return Object.keys(state.pendingSaves).length ? flushPendingSaves() : undefined;
+    });
+  }
+
+  async function saveTradeFields(tradeId, version) {
+    const pending = state.pendingSaves[tradeId];
+    if (!pending) return;
+    if (state.savingTrades[tradeId]) {
+      pending.timer = setTimeout(() => saveTradeFields(tradeId, pending.version), SAVE_RETRY_DELAY_MS);
+      return;
+    }
+    clearPendingSave(tradeId);
+
+    const payload = pending.payload || getEditablePayload(tradeId);
     if (!payload || !validatePayload(payload)) return;
 
+    state.savingTrades[tradeId] = true;
     setSaveState(tradeId, '保存中...');
+    const savePromise = runGas('updateEntryFields', payload);
+    state.savePromises[tradeId] = savePromise;
     try {
-      const updated = await runGas('updateEntryFields', payload);
-      mergeTrade(normalizeTrade(updated || payload));
-      setSaveState(tradeId, '保存しました');
-      setTimeout(() => setSaveState(tradeId, ''), 1600);
+      const updated = await savePromise;
+      if (state.saveVersions[tradeId] === version) {
+        mergeTrade(normalizeTrade(updated || payload));
+        setSaveState(tradeId, '保存しました');
+        setTimeout(() => {
+          if (state.saveVersions[tradeId] === version && !state.pendingSaves[tradeId]) {
+            setSaveState(tradeId, '');
+          }
+        }, 1600);
+      }
     } catch (error) {
       setSaveState(tradeId, '保存失敗');
       showToast(getErrorMessage(error, '入力内容の保存に失敗しました'), true);
+    } finally {
+      if (state.savePromises[tradeId] === savePromise) {
+        delete state.savePromises[tradeId];
+      }
+      delete state.savingTrades[tradeId];
+      if (state.pendingSaves[tradeId]) {
+        await saveTradeFields(tradeId, state.pendingSaves[tradeId].version);
+      }
     }
   }
 
@@ -418,7 +532,7 @@
   function renderHistory() {
     const trades = sortTrades(state.historyTrades);
     els.historyEmpty.style.display = trades.length ? 'none' : 'grid';
-    els.historyList.innerHTML = '';
+    const fragment = document.createDocumentFragment();
     const groups = groupByDate(trades);
 
     Object.keys(groups).forEach((dateKey) => {
@@ -432,8 +546,9 @@
       groups[dateKey].forEach((trade) => {
         section.appendChild(createHistoryItem(trade));
       });
-      els.historyList.appendChild(section);
+      fragment.appendChild(section);
     });
+    replaceContent(els.historyList, fragment);
   }
 
   function createHistoryItem(trade) {
@@ -470,12 +585,16 @@
   function renderDetail() {
     const trade = state.currentTrade;
     if (!trade || !trade.trade_id) {
-      els.detailContent.innerHTML = '<div class="empty-state"><p>対象の記録が見つかりません。</p></div>';
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      const message = document.createElement('p');
+      message.textContent = '対象の記録が見つかりません。';
+      empty.appendChild(message);
+      replaceContent(els.detailContent, empty);
       return;
     }
 
     els.detailStatus.textContent = toStatusLabel(trade.status);
-    els.detailContent.innerHTML = '';
 
     const panel = document.createElement('article');
     panel.className = 'detail-panel';
@@ -501,7 +620,9 @@
     } else {
       const waiting = document.createElement('div');
       waiting.className = 'empty-state';
-      waiting.innerHTML = '<p>結果待ちです。</p>';
+      const waitingMessage = document.createElement('p');
+      waitingMessage.textContent = '結果待ちです。';
+      waiting.appendChild(waitingMessage);
       panel.appendChild(waiting);
 
       const resultButton = document.createElement('button');
@@ -526,7 +647,7 @@
       panel.append(resultButton, resultInput);
     }
 
-    els.detailContent.appendChild(panel);
+    replaceContent(els.detailContent, panel);
   }
 
   function createSectionLabel(text) {
@@ -562,15 +683,46 @@
     window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
   }
 
+  function startRequest(key) {
+    const requestId = ++state.requestSeq;
+    state.activeRequests[key] = requestId;
+    return requestId;
+  }
+
+  function isLatestRequest(key, requestId) {
+    return state.activeRequests[key] === requestId;
+  }
+
+  function canUseCachedView(view, options) {
+    const force = options && options.force;
+    if (force || !state.loadedViews[view] || state.dirtyViews[view]) {
+      return false;
+    }
+    return Date.now() - state.lastLoadedAt[view] < VIEW_CACHE_TTL_MS;
+  }
+
   function runGas(functionName, ...args) {
     return new Promise((resolve, reject) => {
       if (!window.google || !google.script || !google.script.run) {
         reject(new Error('google.script.run が利用できません'));
         return;
       }
+      let settled = false;
+      const finish = (handler, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        handler(value);
+      };
+      const timer = setTimeout(() => {
+        finish(reject, new Error(`${functionName} の応答がありません。通信状況を確認して再度お試しください。`));
+      }, GAS_TIMEOUT_MS);
       google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(reject)[functionName](...args);
+        .withSuccessHandler((value) => finish(resolve, value))
+        .withFailureHandler((error) => {
+          const message = getErrorMessage(error, `${functionName} の実行に失敗しました`);
+          finish(reject, new Error(message));
+        })[functionName](...args);
     });
   }
 
@@ -579,7 +731,10 @@
   }
 
   async function readImagesAsBase64(files) {
-    const images = await Promise.all(files.map(readImageAsBase64));
+    const images = [];
+    for (const file of files) {
+      images.push(await readImageAsBase64(file));
+    }
     return { images };
   }
 
@@ -607,6 +762,11 @@
     }
     if (files.length > MAX_IMAGES_PER_TRADE) {
       showToast(`画像は1回につき${MAX_IMAGES_PER_TRADE}枚まで選択できます`, true);
+      return false;
+    }
+    const oversized = files.find(file => Number(file.size || 0) > MAX_IMAGE_BYTES);
+    if (oversized) {
+      showToast(`画像は1枚あたり${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB以内にしてください`, true);
       return false;
     }
     const unsupported = files.find(file => !ALLOWED_MIME_TYPES.includes(inferMimeType(file)));
@@ -639,10 +799,22 @@
     });
   }
 
-  function setLoading(isLoading) {
-    state.loading = isLoading;
-    els.loadingCover.classList.toggle('is-visible', isLoading);
-    els.refreshButton.disabled = isLoading;
+  function beginLoading() {
+    state.loadingCount += 1;
+    updateLoadingState();
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      state.loadingCount = Math.max(0, state.loadingCount - 1);
+      updateLoadingState();
+    };
+  }
+
+  function updateLoadingState() {
+    state.loading = state.loadingCount > 0;
+    els.loadingCover.classList.toggle('is-visible', state.loading);
+    els.refreshButton.disabled = state.loading;
   }
 
   function setSaveState(tradeId, text) {
@@ -669,6 +841,10 @@
     state.historyTrades = state.historyTrades.map(apply);
     if (state.currentTrade && state.currentTrade.trade_id === trade.trade_id) {
       state.currentTrade = Object.assign({}, state.currentTrade, trade);
+    }
+    state.dirtyViews.history = true;
+    if (state.view !== 'home') {
+      state.dirtyViews.home = true;
     }
   }
 
@@ -760,13 +936,24 @@
       img.src = url;
       img.alt = alt;
       img.loading = 'lazy';
+      img.decoding = 'async';
       img.referrerPolicy = 'no-referrer';
+      img.addEventListener('error', () => {
+        img.replaceWith(createImage('', alt));
+      }, { once: true });
       return img;
     }
     const placeholder = document.createElement('div');
     placeholder.className = 'image-placeholder';
     placeholder.textContent = '画像なし';
     return placeholder;
+  }
+
+  function replaceContent(element, child) {
+    element.textContent = '';
+    if (child) {
+      element.appendChild(child);
+    }
   }
 
   function createImageGallery(urls, altPrefix, kind) {

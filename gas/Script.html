@@ -3,6 +3,7 @@
   'use strict';
 
   const AUTO_SAVE_DELAY_MS = 1000;
+  const APP_TIMEZONE = 'Asia/Tokyo';
   const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
   const ENTRY_FIELD_PATTERN = /^[A-Za-z0-9.:_\-/+ ]{0,32}$/;
   const MAX_MEMO_LENGTH = 1000;
@@ -591,7 +592,7 @@
         resolve({
           imageBase64,
           fileName: file.name || 'trade-image',
-          mimeType: file.type
+          mimeType: inferMimeType(file)
         });
       };
       reader.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
@@ -608,12 +609,22 @@
       showToast(`画像は1回につき${MAX_IMAGES_PER_TRADE}枚まで選択できます`, true);
       return false;
     }
-    const unsupported = files.find(file => !ALLOWED_MIME_TYPES.includes(file.type));
+    const unsupported = files.find(file => !ALLOWED_MIME_TYPES.includes(inferMimeType(file)));
     if (unsupported) {
-      showToast('この画像形式は対応していません', true);
+      showToast('この画像形式は対応していません。iPhoneスクリーンショットはPNGまたはJPEG形式で選択してください', true);
       return false;
     }
     return true;
+  }
+
+  function inferMimeType(file) {
+    const explicitType = String(file && file.type || '').toLowerCase();
+    if (explicitType) return explicitType;
+    const name = String(file && file.name || '').toLowerCase();
+    if (/\.(png)$/.test(name)) return 'image/png';
+    if (/\.(jpe?g)$/.test(name)) return 'image/jpeg';
+    if (/\.(webp)$/.test(name)) return 'image/webp';
+    return '';
   }
 
   function setUploading(isUploading, button, label) {
@@ -818,9 +829,12 @@
   }
 
   function formatDate(value) {
+    const parts = getDateParts(value);
+    if (parts) return `${parts.year}/${parts.month}/${parts.day}`;
     const date = parseDate(value);
     if (!date) return '-';
     return new Intl.DateTimeFormat('ja-JP', {
+      timeZone: APP_TIMEZONE,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
@@ -828,9 +842,12 @@
   }
 
   function formatTime(value) {
+    const parts = getDateParts(value);
+    if (parts && parts.hour) return `${parts.hour}:${parts.minute || '00'}`;
     const date = parseDate(value);
     if (!date) return '--:--';
     return new Intl.DateTimeFormat('ja-JP', {
+      timeZone: APP_TIMEZONE,
       hour: '2-digit',
       minute: '2-digit',
       hour12: false
@@ -838,9 +855,22 @@
   }
 
   function formatDateTime(value) {
-    const date = parseDate(value);
-    if (!date) return '-';
-    return `${formatDate(date)} ${formatTime(date)}`;
+    if (!value) return '-';
+    return `${formatDate(value)} ${formatTime(value)}`;
+  }
+
+  function getDateParts(value) {
+    if (!value || typeof value !== 'string') return null;
+    const match = value.trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (!match) return null;
+    return {
+      year: match[1],
+      month: match[2].padStart(2, '0'),
+      day: match[3].padStart(2, '0'),
+      hour: match[4] ? match[4].padStart(2, '0') : '',
+      minute: match[5] || '',
+      second: match[6] || ''
+    };
   }
 
   function formatDuration(value) {

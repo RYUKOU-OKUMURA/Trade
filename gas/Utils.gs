@@ -24,7 +24,9 @@ function formatDate(date, pattern) {
 
 function getDayOfWeek(date) {
   var weekdays = ['日', '月', '火', '水', '木', '金', '土'];
-  return weekdays[new Date(date).getDay()];
+  var parts = Utilities.formatDate(new Date(date), TIMEZONE, 'yyyy/MM/dd').split('/');
+  var utcDate = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])));
+  return weekdays[utcDate.getUTCDay()] || '';
 }
 
 function calculateDurationMinutes(startDate, endDate) {
@@ -49,6 +51,20 @@ function getExtensionFromMimeType(mimeType) {
     return 'webp';
   }
   return 'jpg';
+}
+
+function getMimeTypeFromFileName(fileName) {
+  var name = String(fileName || '').toLowerCase();
+  if (/\.(png)$/.test(name)) {
+    return 'image/png';
+  }
+  if (/\.(webp)$/.test(name)) {
+    return 'image/webp';
+  }
+  if (/\.(jpe?g)$/.test(name)) {
+    return 'image/jpeg';
+  }
+  return '';
 }
 
 function sanitizeEntryField(value, fieldName) {
@@ -97,19 +113,18 @@ function validateImagePayload(payload) {
     throw new Error('画像を選択してください。');
   }
 
-  var mimeType = String(payload.mimeType || '').toLowerCase();
-  if (ALLOWED_MIME_TYPES.indexOf(mimeType) === -1) {
-    throw new Error('この画像形式は対応していません。jpg / png / webpを選択してください。');
-  }
-
   var base64 = String(payload.imageBase64);
+  var mimeType = String(payload.mimeType || '').toLowerCase();
   var dataUrlMatch = base64.match(/^data:([^;]+);base64,(.+)$/);
   if (dataUrlMatch) {
     mimeType = String(dataUrlMatch[1]).toLowerCase();
-    if (ALLOWED_MIME_TYPES.indexOf(mimeType) === -1) {
-      throw new Error('この画像形式は対応していません。jpg / png / webpを選択してください。');
-    }
     base64 = dataUrlMatch[2];
+  }
+  if (!mimeType) {
+    mimeType = getMimeTypeFromFileName(payload.fileName);
+  }
+  if (ALLOWED_MIME_TYPES.indexOf(mimeType) === -1) {
+    throw new Error('この画像形式は対応していません。iPhoneスクリーンショットはPNGまたはJPEG形式で選択してください。');
   }
 
   return {

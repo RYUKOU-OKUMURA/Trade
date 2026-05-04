@@ -1,6 +1,7 @@
 function getTradesSheet_() {
   requireConfigured_(SPREADSHEET_ID, 'SPREADSHEET_ID');
   var spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+  ensureSpreadsheetSettings_(spreadsheet);
   var sheet = spreadsheet.getSheetByName(TRADES_SHEET_NAME);
   if (!sheet) {
     sheet = spreadsheet.insertSheet(TRADES_SHEET_NAME);
@@ -8,6 +9,12 @@ function getTradesSheet_() {
   ensureHeader(sheet);
   setTextFormats(sheet);
   return sheet;
+}
+
+function ensureSpreadsheetSettings_(spreadsheet) {
+  if (spreadsheet.getSpreadsheetTimeZone() !== TIMEZONE) {
+    spreadsheet.setSpreadsheetTimeZone(TIMEZONE);
+  }
 }
 
 function ensureHeader(sheet) {
@@ -97,7 +104,11 @@ function updateTradeRow(rowIndex, updates) {
     if (TEXT_COLUMNS.indexOf(header) !== -1) {
       cell.setNumberFormat('@');
     }
-    cell.setValue(updates[header]);
+    if (isImagePreviewColumn_(header) && updates[header]) {
+      cell.setFormula(updates[header]);
+    } else {
+      cell.setValue(updates[header]);
+    }
   });
   return mapRowToTrade(sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0], map);
 }
@@ -271,4 +282,8 @@ function setTradeRowTextFormats_(sheet, map, rowIndex) {
       sheet.getRange(rowIndex, map[header]).setNumberFormat('@');
     }
   });
+}
+
+function isImagePreviewColumn_(header) {
+  return header === 'entry_image_preview' || header === 'result_image_preview';
 }

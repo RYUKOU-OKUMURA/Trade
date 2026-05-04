@@ -46,6 +46,7 @@ function createValidatedImageFile_(folderId, kind, tradeId, image, savedAt, inde
   var blob = Utilities.newBlob(bytes, image.mimeType, fileName);
   var folder = DriveApp.getFolderById(folderId);
   var file = folder.createFile(blob);
+  configureImageFileForPreview_(file);
 
   return {
     fileId: file.getId(),
@@ -57,8 +58,40 @@ function createValidatedImageFile_(folderId, kind, tradeId, image, savedAt, inde
 }
 
 function getImageUrl(file) {
-  // Driveの通常URLは<img>で表示しづらいため、アプリ内表示向けのサムネイルURLを保存する。
-  return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(file.getId()) + '&sz=w1200';
+  return 'https://drive.google.com/uc?export=view&id=' + encodeURIComponent(file.getId());
+}
+
+function getImagePreviewFormula(file) {
+  return buildImagePreviewFormula_(getImageUrl(file));
+}
+
+function buildImagePreviewFormula_(url) {
+  if (!url) {
+    return '';
+  }
+  return '=IMAGE("' + String(url).replace(/"/g, '""') + '", 4, 120, 160)';
+}
+
+function configureImageFileForPreview_(file) {
+  if (!SHARE_IMAGE_FILES_FOR_PREVIEW) {
+    return;
+  }
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+}
+
+function getImageInfoFromFileId_(fileId) {
+  if (!fileId) {
+    return null;
+  }
+  var file = DriveApp.getFileById(fileId);
+  configureImageFileForPreview_(file);
+  return {
+    fileId: file.getId(),
+    url: getImageUrl(file),
+    fileName: file.getName(),
+    originalFileName: file.getName(),
+    mimeType: file.getMimeType()
+  };
 }
 
 function trashDriveFileQuietly_(fileId) {

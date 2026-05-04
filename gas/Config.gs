@@ -4,8 +4,8 @@ var TIMEZONE = 'Asia/Tokyo';
 // GASエディタへ貼り付け後、実際のIDに差し替えてください。
 var SPREADSHEET_ID = '1lL_FyDxjWXLQFP-gmw-QLLqYXP0ZUSZVCGBeJf-cwPE';
 var TRADES_SHEET_NAME = 'trades';
-var ENTRY_FOLDER_ID = '1Nr6XUWc4VBH_qMLfvstwOC_I9OdUN1ZV';
-var RESULT_FOLDER_ID = '1Nr6XUWc4VBH_qMLfvstwOC_I9OdUN1ZV';
+var ENTRY_FOLDER_ID = '1h6JN4IWUZoZGepK79M5O2z_PWd-z5MYT';
+var RESULT_FOLDER_ID = '1PDVT4cTv2q7jXz7XGx3nB-4r_5bLoZMg';
 
 var STATUS_WAITING = 'waiting';
 var STATUS_COMPLETED = 'completed';
@@ -16,6 +16,7 @@ var MAX_ENTRY_FIELD_LENGTH = 32;
 var MAX_MEMO_LENGTH = 1000;
 var MAX_IMAGES_PER_TRADE = 6;
 var LOCK_WAIT_MS = 30000;
+var SHARE_IMAGE_FILES_FOR_PREVIEW = true;
 
 var ALLOWED_MIME_TYPES = [
   'image/jpeg',
@@ -33,6 +34,8 @@ var TRADE_HEADERS = [
   'duration_minutes',
   'entry_image_url',
   'result_image_url',
+  'entry_image_preview',
+  'result_image_preview',
   'entry_image_urls',
   'result_image_urls',
   'memo',

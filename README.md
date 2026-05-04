@@ -29,6 +29,8 @@ result_saved_at
 duration_minutes
 entry_image_url
 result_image_url
+entry_image_preview
+result_image_preview
 entry_image_urls
 result_image_urls
 memo
@@ -52,8 +54,9 @@ updated_at
 
 4. `limit_value`、`stop_value`、`expected_reach_time`、`entry_image_urls`、`result_image_urls`、`entry_image_file_ids`、`result_image_file_ids`、`entry_image_filenames`、`result_image_filenames` はプレーンテキスト形式にします。
 5. `entry_saved_at`、`result_saved_at`、`updated_at` は日時形式にします。
-6. `duration_minutes`、`entry_image_count`、`result_image_count` は数値形式にします。
-7. スプレッドシートURLからスプレッドシートIDを控えます。
+6. `entry_image_preview`、`result_image_preview` は画像プレビュー用の数式列として扱います。
+7. `duration_minutes`、`entry_image_count`、`result_image_count` は数値形式にします。
+8. スプレッドシートURLからスプレッドシートIDを控えます。
 
 ### 2. Driveフォルダを作成
 
@@ -185,6 +188,7 @@ var STATUS_COMPLETED = 'completed';
 var AUTO_SAVE_DELAY_MS = 1000;
 var MAX_HISTORY_ITEMS = 300;
 var MAX_IMAGES_PER_TRADE = 6;
+var SHARE_IMAGE_FILES_FOR_PREVIEW = true;
 
 var ALLOWED_MIME_TYPES = [
   'image/jpeg',
@@ -205,7 +209,9 @@ var ENTRY_FIELD_ALLOWED_PATTERN = /^[A-Za-z0-9.:_\-/+ ]{0,32}$/;
 - `154.000` が `154` に変換されないこと、`21:30` が時刻型に変換されないことを確認します。
 - 1エントリーはスプレッドシート上で必ず1行として保存します。複数画像は同じ行の `entry_image_urls` / `result_image_urls` などにJSON配列として保存されます。
 - `entry_image_url` / `result_image_url` は代表サムネイル用の先頭画像です。複数画像の完全な紐付けは `*_urls`、`*_file_ids`、`*_filenames`、`*_image_count` を確認します。
-- 画像URLはアプリ内表示のためDriveサムネイルURLとして保存されます。利用者が画像を表示できない場合は、対象Googleアカウントに画像フォルダの閲覧権限を付与してください。
+- 画像URLはアプリ内表示とスプレッドシートの `IMAGE()` プレビュー用に、Driveの表示URLとして保存されます。
+- `SHARE_IMAGE_FILES_FOR_PREVIEW` が `true` の場合、保存した画像ファイルは「リンクを知っている人が閲覧可」になります。非公開のままだとiPhoneのWeb App内やスプレッドシートの `IMAGE()` で表示できないことがあります。
+- 既存データの画像表示を直す場合は、Apps Scriptエディタで `repairTradeImagePreviews()` を1回実行してください。Drive共有設定、代表URL、JSON配列URL、プレビュー数式を再作成します。
 
 ## Web Appデプロイ
 

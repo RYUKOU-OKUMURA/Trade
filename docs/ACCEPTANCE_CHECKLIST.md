@@ -14,8 +14,10 @@ Trade MVPの実機受け入れチェックリストです。スマホでWeb App 
 - [ ] `Config.gs` の `RESULT_FOLDER_ID` が正しい
 - [ ] `Config.gs` の `TIMEZONE` が `Asia/Tokyo` になっている
 - [ ] `setupTradeSheet()` を1回実行済み
+- [ ] `Trade_DB` スプレッドシートのタイムゾーンが `Asia/Tokyo` になっている
 - [ ] `limit_value`、`stop_value`、`expected_reach_time` がプレーンテキスト列になっている
 - [ ] `entry_image_urls`、`result_image_urls`、`entry_image_file_ids`、`result_image_file_ids` がプレーンテキスト列になっている
+- [ ] `entry_image_preview`、`result_image_preview` がプレビュー数式列になっている
 - [ ] スマホで利用するGoogleアカウントが画像フォルダを閲覧できる
 - [ ] テスト用のエントリー画像と結果画像を複数枚スマホに用意している
 
@@ -84,6 +86,7 @@ Trade MVPの実機受け入れチェックリストです。スマホでWeb App 
 - [ ] `trade_id` が入っている
 - [ ] `entry_saved_at` が入っている
 - [ ] `entry_image_url` が入っている
+- [ ] `entry_image_preview` に画像プレビューが表示されている
 - [ ] `entry_image_file_id` が入っている
 - [ ] `entry_image_urls` に選択枚数分のURLがJSON配列で入っている
 - [ ] `entry_image_file_ids` に選択枚数分のファイルIDがJSON配列で入っている
@@ -298,6 +301,7 @@ Trade MVPの実機受け入れチェックリストです。スマホでWeb App 
 - [ ] 新しい別行が作られていない
 - [ ] `result_saved_at` が入っている
 - [ ] `result_image_url` が入っている
+- [ ] `result_image_preview` に画像プレビューが表示されている
 - [ ] `result_image_file_id` が入っている
 - [ ] `result_image_urls` に選択枚数分のURLがJSON配列で入っている
 - [ ] `result_image_file_ids` に選択枚数分のファイルIDがJSON配列で入っている
@@ -483,6 +487,8 @@ Trade MVPの実機受け入れチェックリストです。スマホでWeb App 
 - [ ] jpegを保存できる
 - [ ] pngを保存できる
 - [ ] webpを保存できる
+- [ ] iPhoneスクリーンショットをPNGまたはJPEGとして保存できる
+- [ ] iPhoneでMIMEタイプが空になる画像でも、拡張子がpng/jpg/jpeg/webpなら保存できる
 - [ ] 1回の操作で2〜6枚の画像を保存できる
 - [ ] 7枚以上を選択すると分かりやすいエラーが出る
 - [ ] HEICはMVP非推奨として扱われる
@@ -495,6 +501,8 @@ Trade MVPの実機受け入れチェックリストです。スマホでWeb App 
 - [ ] エントリー画像と結果画像が同じ `trade_id` に紐づく
 - [ ] 複数画像を保存しても `trades` シート上の1エントリーは1行のままになる
 - [ ] `entry_image_urls` / `result_image_urls` の配列順とDriveファイル名の連番が一致する
+- [ ] アプリ内の画像表示とスプレッドシートのプレビュー画像が同じ `trade_id` の画像を指している
+- [ ] `entry_saved_at`、`result_saved_at`、`updated_at` が日本時間で記録・表示される
 - [ ] 結果画像保存で新規行が作られない
 - [ ] `waiting` はホームに表示される
 - [ ] `completed` はホームに表示されない

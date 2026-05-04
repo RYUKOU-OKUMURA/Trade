@@ -14,6 +14,8 @@ function createEntryTrade(payload) {
         duration_minutes: '',
         entry_image_url: entryImageColumns.entry_image_url,
         result_image_url: '',
+        entry_image_preview: entryImageColumns.entry_image_preview,
+        result_image_preview: '',
         entry_image_urls: entryImageColumns.entry_image_urls,
         result_image_urls: '',
         memo: '',
@@ -100,6 +102,7 @@ function completeTrade(payload) {
         result_saved_at: savedAt,
         duration_minutes: calculateDurationMinutes(found.trade.entry_saved_at, savedAt),
         result_image_url: resultImageColumns.result_image_url,
+        result_image_preview: resultImageColumns.result_image_preview,
         result_image_urls: resultImageColumns.result_image_urls,
         result_image_file_id: resultImageColumns.result_image_file_id,
         result_image_file_ids: resultImageColumns.result_image_file_ids,
@@ -148,6 +151,7 @@ function buildImageColumns_(kind, images) {
   });
   var columns = {};
   columns[kind + '_image_url'] = urls[0] || '';
+  columns[kind + '_image_preview'] = urls[0] ? buildImagePreviewFormula_(urls[0]) : '';
   columns[kind + '_image_urls'] = serializeList_(urls);
   columns[kind + '_image_file_id'] = fileIds[0] || '';
   columns[kind + '_image_file_ids'] = serializeList_(fileIds);
@@ -155,4 +159,55 @@ function buildImageColumns_(kind, images) {
   columns[kind + '_image_filenames'] = serializeList_(fileNames);
   columns[kind + '_image_count'] = images.length;
   return columns;
+}
+
+function repairTradeImagePreviews() {
+  return withDocumentLock_(function() {
+    var sheet = getTradesSheet_();
+    var map = getHeaderMap_(sheet);
+    if (sheet.getLastRow() < 2) {
+      return {
+        ok: true,
+        repaired: 0
+      };
+    }
+
+    var repaired = 0;
+    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+    values.forEach(function(row, index) {
+      var rowIndex = index + 2;
+      var trade = mapRowToTrade(row, map);
+      if (!trade.trade_id) {
+        return;
+      }
+
+      var updates = {};
+      mergeImageRepairUpdates_(updates, 'entry', trade.entry_image_file_ids);
+      mergeImageRepairUpdates_(updates, 'result', trade.result_image_file_ids);
+      if (Object.keys(updates).length) {
+        updateTradeRow(rowIndex, updates);
+        repaired++;
+      }
+    });
+
+    return {
+      ok: true,
+      repaired: repaired
+    };
+  });
+}
+
+function mergeImageRepairUpdates_(updates, kind, fileIds) {
+  var images = (fileIds || []).map(function(fileId) {
+    return getImageInfoFromFileId_(fileId);
+  }).filter(function(image) {
+    return image;
+  });
+  if (!images.length) {
+    return;
+  }
+  var columns = buildImageColumns_(kind, images);
+  Object.keys(columns).forEach(function(header) {
+    updates[header] = columns[header];
+  });
 }

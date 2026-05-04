@@ -20,6 +20,7 @@ function getAppConfig() {
     maxEntryFieldLength: MAX_ENTRY_FIELD_LENGTH,
     maxMemoLength: MAX_MEMO_LENGTH,
     maxImagesPerTrade: MAX_IMAGES_PER_TRADE,
+    shareImageFilesForPreview: SHARE_IMAGE_FILES_FOR_PREVIEW,
     allowedMimeTypes: ALLOWED_MIME_TYPES
   };
 }
@@ -32,6 +33,7 @@ function setupTradeSheet() {
     return {
       ok: true,
       sheetName: sheet.getName(),
+      timezone: sheet.getParent().getSpreadsheetTimeZone(),
       headers: TRADE_HEADERS
     };
   });

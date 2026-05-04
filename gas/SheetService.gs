@@ -88,8 +88,11 @@ function appendTradeRow(trade) {
   var map = getHeaderMap_(sheet);
   var rowIndex = sheet.getLastRow() + 1;
   var rowValues = buildRowValues_(map, trade, sheet.getLastColumn());
+  var dateTimeValues = takeDateTimeValues_(map, rowValues);
   setTradeRowTextFormats_(sheet, map, rowIndex);
+  setTradeRowDateTimeFormats_(sheet, map, rowIndex);
   sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).setValues([rowValues]);
+  setTradeRowDateTimeValues_(sheet, map, rowIndex, dateTimeValues);
   return mapRowToTrade(sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0], map);
 }
 
@@ -103,6 +106,9 @@ function updateTradeRow(rowIndex, updates) {
     var cell = sheet.getRange(rowIndex, map[header]);
     if (TEXT_COLUMNS.indexOf(header) !== -1) {
       cell.setNumberFormat('@');
+    }
+    if (DATETIME_COLUMNS.indexOf(header) !== -1) {
+      cell.setNumberFormat('yyyy/mm/dd hh:mm:ss');
     }
     if (isImagePreviewColumn_(header) && updates[header]) {
       cell.setFormula(updates[header]);
@@ -276,11 +282,39 @@ function buildRowValues_(map, trade, columnCount) {
   return values;
 }
 
+function takeDateTimeValues_(map, rowValues) {
+  var dateTimeValues = {};
+  DATETIME_COLUMNS.forEach(function(header) {
+    if (map[header]) {
+      dateTimeValues[header] = rowValues[map[header] - 1];
+      rowValues[map[header] - 1] = '';
+    }
+  });
+  return dateTimeValues;
+}
+
 function setTradeRowTextFormats_(sheet, map, rowIndex) {
   TEXT_COLUMNS.forEach(function(header) {
     if (map[header]) {
       sheet.getRange(rowIndex, map[header]).setNumberFormat('@');
     }
+  });
+}
+
+function setTradeRowDateTimeFormats_(sheet, map, rowIndex) {
+  DATETIME_COLUMNS.forEach(function(header) {
+    if (map[header]) {
+      sheet.getRange(rowIndex, map[header]).setNumberFormat('yyyy/mm/dd hh:mm:ss');
+    }
+  });
+}
+
+function setTradeRowDateTimeValues_(sheet, map, rowIndex, dateTimeValues) {
+  DATETIME_COLUMNS.forEach(function(header) {
+    if (!map[header] || !dateTimeValues[header]) {
+      return;
+    }
+    sheet.getRange(rowIndex, map[header]).setValue(dateTimeValues[header]);
   });
 }
 

@@ -1,0 +1,804 @@
+<script>
+(() => {
+  'use strict';
+
+  const AUTO_SAVE_DELAY_MS = 1000;
+  const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+  const ENTRY_FIELD_PATTERN = /^[A-Za-z0-9.:_\-/+ ]{0,32}$/;
+  const MAX_MEMO_LENGTH = 1000;
+
+  const state = {
+    view: 'home',
+    previousView: 'home',
+    waitingTrades: [],
+    historyTrades: [],
+    currentTrade: null,
+    pendingSaves: {},
+    uploading: false,
+    loading: false
+  };
+
+  const els = {};
+
+  document.addEventListener('DOMContentLoaded', init);
+
+  function init() {
+    cacheElements();
+    bindGlobalEvents();
+    showView('home');
+    loadHome();
+  }
+
+  function cacheElements() {
+    els.backButton = document.getElementById('backButton');
+    els.refreshButton = document.getElementById('refreshButton');
+    els.viewLabel = document.getElementById('viewLabel');
+    els.homeView = document.getElementById('homeView');
+    els.historyView = document.getElementById('historyView');
+    els.detailView = document.getElementById('detailView');
+    els.entryUploadButton = document.getElementById('entryUploadButton');
+    els.entryFileInput = document.getElementById('entryFileInput');
+    els.historyButton = document.getElementById('historyButton');
+    els.homeFromHistoryButton = document.getElementById('homeFromHistoryButton');
+    els.waitingList = document.getElementById('waitingList');
+    els.waitingEmpty = document.getElementById('waitingEmpty');
+    els.waitingCount = document.getElementById('waitingCount');
+    els.historyList = document.getElementById('historyList');
+    els.historyEmpty = document.getElementById('historyEmpty');
+    els.detailContent = document.getElementById('detailContent');
+    els.detailStatus = document.getElementById('detailStatus');
+    els.toast = document.getElementById('toast');
+    els.loadingCover = document.getElementById('loadingCover');
+  }
+
+  function bindGlobalEvents() {
+    els.backButton.addEventListener('click', () => {
+      if (state.view === 'detail') {
+        showView(state.previousView === 'history' ? 'history' : 'home');
+        return;
+      }
+      showView('home');
+    });
+
+    els.refreshButton.addEventListener('click', () => {
+      if (state.view === 'history') {
+        loadHistory();
+      } else if (state.view === 'detail' && state.currentTrade) {
+        loadDetail(state.currentTrade.trade_id, state.previousView);
+      } else {
+        loadHome();
+      }
+    });
+
+    els.historyButton.addEventListener('click', () => {
+      showView('history');
+      loadHistory();
+    });
+
+    els.homeFromHistoryButton.addEventListener('click', () => {
+      showView('home');
+      loadHome();
+    });
+
+    els.entryUploadButton.addEventListener('click', () => {
+      if (state.uploading) return;
+      els.entryFileInput.click();
+    });
+
+    els.entryFileInput.addEventListener('change', async (event) => {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = '';
+      if (!file) return;
+      await uploadEntryImage(file);
+    });
+  }
+
+  async function loadHome() {
+    setLoading(true);
+    try {
+      const trades = await runGas('getWaitingTrades');
+      state.waitingTrades = normalizeList(trades);
+      renderWaitingTrades();
+    } catch (error) {
+      showToast(getErrorMessage(error, '結果待ち記録の取得に失敗しました'), true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadHistory() {
+    setLoading(true);
+    try {
+      const trades = await runGas('getHistory');
+      state.historyTrades = normalizeList(trades);
+      renderHistory();
+    } catch (error) {
+      showToast(getErrorMessage(error, '履歴の取得に失敗しました'), true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadDetail(tradeId, previousView) {
+    if (!tradeId) return;
+    setLoading(true);
+    try {
+      const trade = await runGas('getTradeById', tradeId);
+      state.currentTrade = normalizeTrade(trade);
+      state.previousView = previousView || state.previousView || 'home';
+      showView('detail', state.previousView);
+      renderDetail();
+    } catch (error) {
+      showToast(getErrorMessage(error, '詳細の取得に失敗しました'), true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function uploadEntryImage(file) {
+    if (!validateImageFile(file)) return;
+    setUploading(true, els.entryUploadButton, '保存中...');
+    showToast('画像を保存中...');
+    try {
+      const image = await readImageAsBase64(file);
+      const trade = await runGas('createEntryTrade', image);
+      const normalized = normalizeTrade(trade);
+      showToast('エントリー画像を保存しました');
+      state.waitingTrades = [normalized].concat(state.waitingTrades.filter(item => item.trade_id !== normalized.trade_id));
+      renderWaitingTrades();
+    } catch (error) {
+      showToast(getErrorMessage(error, '画像の保存に失敗しました'), true);
+    } finally {
+      setUploading(false, els.entryUploadButton, 'エントリー画像を保存');
+    }
+  }
+
+  async function uploadResultImage(tradeId, file, button) {
+    if (!tradeId || !validateImageFile(file)) return;
+    setUploading(true, button, '保存中...');
+    showToast('結果画像を保存中...');
+    try {
+      const image = await readImageAsBase64(file);
+      const trade = await runGas('completeTrade', Object.assign({ tradeId }, image));
+      const normalized = normalizeTrade(trade);
+      showToast('結果画像を保存しました');
+      state.waitingTrades = state.waitingTrades.filter(item => item.trade_id !== tradeId);
+      renderWaitingTrades();
+      if (state.view === 'detail') {
+        state.currentTrade = normalized;
+        renderDetail();
+      }
+    } catch (error) {
+      showToast(getErrorMessage(error, '画像の保存に失敗しました'), true);
+    } finally {
+      setUploading(false, button, '結果画像を保存');
+    }
+  }
+
+  function renderWaitingTrades() {
+    const trades = sortTrades(state.waitingTrades);
+    els.waitingCount.textContent = `${trades.length}件`;
+    els.waitingEmpty.style.display = trades.length ? 'none' : 'grid';
+    els.waitingList.innerHTML = '';
+    trades.forEach((trade) => {
+      els.waitingList.appendChild(createTradeCard(trade, 'home'));
+    });
+  }
+
+  function createTradeCard(trade, sourceView) {
+    const card = document.createElement('article');
+    card.className = 'trade-card';
+    card.dataset.tradeId = trade.trade_id;
+
+    const top = document.createElement('div');
+    top.className = 'card-top';
+
+    const thumb = document.createElement('button');
+    thumb.className = 'thumb';
+    thumb.type = 'button';
+    thumb.setAttribute('aria-label', '詳細を見る');
+    thumb.appendChild(createImage(trade.entry_image_url, 'エントリー画像'));
+    thumb.addEventListener('click', () => loadDetail(trade.trade_id, sourceView));
+
+    const summary = document.createElement('div');
+    const title = document.createElement('p');
+    title.className = 'card-title';
+    title.textContent = `${formatTime(trade.entry_saved_at)} のエントリー`;
+    const meta = document.createElement('p');
+    meta.className = 'card-meta';
+    meta.appendChild(createMiniPill(toStatusLabel(trade.status)));
+    meta.appendChild(createMiniPill(`${getImageCount(trade)}枚`));
+    if (trade.memo) meta.appendChild(createMiniPill('メモあり'));
+    summary.append(title, meta);
+
+    top.append(thumb, summary);
+
+    const fields = createEditableFields(trade, 'home');
+
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+    const detailButton = document.createElement('button');
+    detailButton.className = 'secondary-button';
+    detailButton.type = 'button';
+    detailButton.textContent = '詳細を見る';
+    detailButton.addEventListener('click', () => loadDetail(trade.trade_id, sourceView));
+
+    const resultButton = document.createElement('button');
+    resultButton.className = 'primary-button';
+    resultButton.type = 'button';
+    resultButton.textContent = '結果画像を保存';
+    const resultInput = document.createElement('input');
+    resultInput.className = 'file-input';
+    resultInput.type = 'file';
+    resultInput.accept = 'image/jpeg,image/png,image/webp';
+    resultButton.addEventListener('click', () => {
+      if (state.uploading) return;
+      resultInput.click();
+    });
+    resultInput.addEventListener('change', async (event) => {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = '';
+      if (!file) return;
+      await uploadResultImage(trade.trade_id, file, resultButton);
+    });
+
+    actions.append(detailButton, resultButton, resultInput);
+    card.append(top, fields, actions);
+    return card;
+  }
+
+  function createEditableFields(trade, scope) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'field-grid two-column';
+    wrapper.dataset.tradeId = trade.trade_id;
+
+    const saveState = document.createElement('div');
+    saveState.className = 'save-state';
+    saveState.dataset.saveState = trade.trade_id;
+    saveState.textContent = '';
+
+    const fields = [
+      { key: 'limit_value', label: '指し値', placeholder: '154.250', inputmode: 'decimal', value: trade.limit_value },
+      { key: 'stop_value', label: '逆指し値', placeholder: '154.000', inputmode: 'decimal', value: trade.stop_value },
+      { key: 'expected_reach_time', label: '到達予想時間', placeholder: '30m / 1h / 21:30', inputmode: 'text', value: trade.expected_reach_time }
+    ];
+
+    fields.forEach((field) => {
+      wrapper.appendChild(createFieldInput(trade, field, scope));
+    });
+
+    wrapper.appendChild(createMemoInput(trade, scope));
+    wrapper.appendChild(saveState);
+    return wrapper;
+  }
+
+  function createFieldInput(trade, field, scope) {
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    const id = `${scope}_${field.key}_${trade.trade_id}`;
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = field.label;
+    const input = document.createElement('input');
+    input.id = id;
+    input.type = 'text';
+    input.inputMode = field.inputmode;
+    input.autocomplete = 'off';
+    input.maxLength = 32;
+    input.placeholder = field.placeholder;
+    input.value = field.value || '';
+    input.dataset.field = field.key;
+    input.dataset.tradeId = trade.trade_id;
+    const error = document.createElement('div');
+    error.className = 'field-error';
+    error.dataset.errorFor = field.key;
+    bindAutoSave(input, error);
+    row.append(label, input, error);
+    return row;
+  }
+
+  function createMemoInput(trade, scope) {
+    const row = document.createElement('div');
+    row.className = 'field-row memo';
+    const id = `${scope}_memo_${trade.trade_id}`;
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = 'メモ';
+    const textarea = document.createElement('textarea');
+    textarea.id = id;
+    textarea.maxLength = MAX_MEMO_LENGTH;
+    textarea.placeholder = 'ここにメモ';
+    textarea.value = trade.memo || '';
+    textarea.dataset.field = 'memo';
+    textarea.dataset.tradeId = trade.trade_id;
+    const error = document.createElement('div');
+    error.className = 'field-error';
+    error.dataset.errorFor = 'memo';
+    bindAutoSave(textarea, error);
+    row.append(label, textarea, error);
+    return row;
+  }
+
+  function bindAutoSave(input, errorEl) {
+    input.addEventListener('input', () => {
+      const tradeId = input.dataset.tradeId;
+      const field = input.dataset.field;
+      const value = input.value;
+      const validation = validateField(field, value);
+      errorEl.textContent = validation.message;
+      if (!validation.ok) return;
+      queueAutoSave(tradeId);
+    });
+
+    input.addEventListener('blur', () => {
+      const tradeId = input.dataset.tradeId;
+      if (state.pendingSaves[tradeId]) {
+        queueAutoSave(tradeId, 0);
+      }
+    });
+  }
+
+  function queueAutoSave(tradeId, delay) {
+    if (!tradeId) return;
+    const wait = typeof delay === 'number' ? delay : AUTO_SAVE_DELAY_MS;
+    clearTimeout(state.pendingSaves[tradeId]);
+    setSaveState(tradeId, '保存待ち');
+    state.pendingSaves[tradeId] = setTimeout(() => saveTradeFields(tradeId), wait);
+  }
+
+  async function saveTradeFields(tradeId) {
+    clearTimeout(state.pendingSaves[tradeId]);
+    delete state.pendingSaves[tradeId];
+
+    const payload = getEditablePayload(tradeId);
+    if (!payload || !validatePayload(payload)) return;
+
+    setSaveState(tradeId, '保存中...');
+    try {
+      const updated = await runGas('updateEntryFields', payload);
+      mergeTrade(normalizeTrade(updated || payload));
+      setSaveState(tradeId, '保存しました');
+      setTimeout(() => setSaveState(tradeId, ''), 1600);
+    } catch (error) {
+      setSaveState(tradeId, '保存失敗');
+      showToast(getErrorMessage(error, '入力内容の保存に失敗しました'), true);
+    }
+  }
+
+  function getEditablePayload(tradeId) {
+    const root = document.querySelector('.view.is-active') || document;
+    const read = (field) => {
+      const input = root.querySelector(`[data-trade-id="${cssEscape(tradeId)}"][data-field="${field}"]`);
+      return input ? input.value : '';
+    };
+    return {
+      tradeId,
+      limitValue: read('limit_value').trim(),
+      stopValue: read('stop_value').trim(),
+      expectedReachTime: read('expected_reach_time').trim(),
+      memo: read('memo').slice(0, MAX_MEMO_LENGTH)
+    };
+  }
+
+  function validatePayload(payload) {
+    const fields = [
+      ['limit_value', payload.limitValue, '指し値'],
+      ['stop_value', payload.stopValue, '逆指し値'],
+      ['expected_reach_time', payload.expectedReachTime, '到達予想時間'],
+      ['memo', payload.memo, 'メモ']
+    ];
+    return fields.every(([key, value, label]) => {
+      const result = validateField(key, value);
+      if (!result.ok) {
+        showToast(`${label}${result.message}`, true);
+      }
+      return result.ok;
+    });
+  }
+
+  function validateField(field, value) {
+    if (field === 'memo') {
+      return value.length <= MAX_MEMO_LENGTH
+        ? { ok: true, message: '' }
+        : { ok: false, message: 'は1000文字以内で入力してください' };
+    }
+    if (!ENTRY_FIELD_PATTERN.test(value)) {
+      return { ok: false, message: 'は英数字で入力してください' };
+    }
+    return { ok: true, message: '' };
+  }
+
+  function renderHistory() {
+    const trades = sortTrades(state.historyTrades);
+    els.historyEmpty.style.display = trades.length ? 'none' : 'grid';
+    els.historyList.innerHTML = '';
+    const groups = groupByDate(trades);
+
+    Object.keys(groups).forEach((dateKey) => {
+      const section = document.createElement('section');
+      section.className = 'history-day';
+      const title = document.createElement('div');
+      title.className = 'history-date';
+      title.textContent = dateKey;
+      section.appendChild(title);
+
+      groups[dateKey].forEach((trade) => {
+        section.appendChild(createHistoryItem(trade));
+      });
+      els.historyList.appendChild(section);
+    });
+  }
+
+  function createHistoryItem(trade) {
+    const button = document.createElement('button');
+    button.className = 'history-item';
+    button.type = 'button';
+    button.addEventListener('click', () => loadDetail(trade.trade_id, 'history'));
+
+    const thumb = document.createElement('div');
+    thumb.className = 'history-thumb';
+    thumb.appendChild(createImage(trade.entry_image_url, 'エントリー画像'));
+
+    const main = document.createElement('div');
+    main.className = 'history-main';
+    const title = document.createElement('p');
+    title.className = 'history-title';
+    title.append(document.createTextNode(formatTime(trade.entry_saved_at)));
+    title.appendChild(createMiniPill(toStatusLabel(trade.status)));
+
+    const summary = document.createElement('p');
+    summary.className = 'history-summary';
+    summary.appendChild(document.createTextNode(`指 ${trade.limit_value || '-'}`));
+    summary.appendChild(document.createTextNode(`逆 ${trade.stop_value || '-'}`));
+    summary.appendChild(document.createTextNode(trade.expected_reach_time || '-'));
+    summary.appendChild(document.createTextNode(trade.memo ? 'メモあり' : 'メモなし'));
+    summary.appendChild(document.createTextNode(`画像${getImageCount(trade)}枚`));
+
+    main.append(title, summary);
+    button.append(thumb, main);
+    return button;
+  }
+
+  function renderDetail() {
+    const trade = state.currentTrade;
+    if (!trade || !trade.trade_id) {
+      els.detailContent.innerHTML = '<div class="empty-state"><p>対象の記録が見つかりません。</p></div>';
+      return;
+    }
+
+    els.detailStatus.textContent = toStatusLabel(trade.status);
+    els.detailContent.innerHTML = '';
+
+    const panel = document.createElement('article');
+    panel.className = 'detail-panel';
+
+    panel.appendChild(createSectionLabel(`${formatDateTime(trade.entry_saved_at)} のエントリー`));
+
+    const entryImage = document.createElement('div');
+    entryImage.className = 'detail-image entry';
+    entryImage.appendChild(createImage(trade.entry_image_url, 'エントリー画像'));
+    panel.appendChild(entryImage);
+
+    const facts = document.createElement('dl');
+    facts.className = 'detail-facts';
+    facts.append(
+      createFact('結果記録', trade.result_saved_at ? formatDateTime(trade.result_saved_at) : '結果待ち'),
+      createFact('経過時間', formatDuration(trade.duration_minutes)),
+      createFact('画像', `${getImageCount(trade)}枚`),
+      createFact('更新', trade.updated_at ? formatDateTime(trade.updated_at) : '-')
+    );
+    panel.appendChild(facts);
+    panel.appendChild(createEditableFields(trade, 'detail'));
+
+    panel.appendChild(createSectionLabel('結果画像'));
+    if (trade.result_image_url) {
+      const resultImage = document.createElement('div');
+      resultImage.className = 'detail-image result';
+      resultImage.appendChild(createImage(trade.result_image_url, '結果画像'));
+      panel.appendChild(resultImage);
+    } else {
+      const waiting = document.createElement('div');
+      waiting.className = 'empty-state';
+      waiting.innerHTML = '<p>結果待ちです。</p>';
+      panel.appendChild(waiting);
+
+      const resultButton = document.createElement('button');
+      resultButton.className = 'primary-button';
+      resultButton.type = 'button';
+      resultButton.textContent = '結果画像を保存';
+      const resultInput = document.createElement('input');
+      resultInput.className = 'file-input';
+      resultInput.type = 'file';
+      resultInput.accept = 'image/jpeg,image/png,image/webp';
+      resultButton.addEventListener('click', () => {
+        if (state.uploading) return;
+        resultInput.click();
+      });
+      resultInput.addEventListener('change', async (event) => {
+        const file = event.target.files && event.target.files[0];
+        event.target.value = '';
+        if (!file) return;
+        await uploadResultImage(trade.trade_id, file, resultButton);
+      });
+      panel.append(resultButton, resultInput);
+    }
+
+    els.detailContent.appendChild(panel);
+  }
+
+  function createSectionLabel(text) {
+    const label = document.createElement('p');
+    label.className = 'panel-label';
+    label.textContent = text;
+    return label;
+  }
+
+  function createFact(label, value) {
+    const item = document.createElement('div');
+    item.className = 'fact';
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value || '-';
+    item.append(dt, dd);
+    return item;
+  }
+
+  function showView(view, previousView) {
+    if (view === 'detail' && previousView) {
+      state.previousView = previousView;
+    } else if (view !== 'detail') {
+      state.previousView = view;
+    }
+    state.view = view;
+    [els.homeView, els.historyView, els.detailView].forEach(el => el.classList.remove('is-active'));
+    const target = view === 'history' ? els.historyView : view === 'detail' ? els.detailView : els.homeView;
+    target.classList.add('is-active');
+    els.backButton.classList.toggle('is-hidden', view === 'home');
+    els.viewLabel.textContent = view === 'history' ? '履歴' : view === 'detail' ? '詳細' : '今日の記録';
+    window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+  }
+
+  function runGas(functionName, ...args) {
+    return new Promise((resolve, reject) => {
+      if (!window.google || !google.script || !google.script.run) {
+        reject(new Error('google.script.run が利用できません'));
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject)[functionName](...args);
+    });
+  }
+
+  function readImageAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        const imageBase64 = result.includes(',') ? result.split(',')[1] : result;
+        resolve({
+          imageBase64,
+          fileName: file.name || 'trade-image',
+          mimeType: file.type
+        });
+      };
+      reader.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function validateImageFile(file) {
+    if (!file) {
+      showToast('画像を選択してください', true);
+      return false;
+    }
+    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+      showToast('この画像形式は対応していません', true);
+      return false;
+    }
+    return true;
+  }
+
+  function setUploading(isUploading, button, label) {
+    state.uploading = isUploading;
+    if (button) {
+      button.disabled = isUploading;
+      button.textContent = label;
+    }
+    els.entryUploadButton.disabled = isUploading;
+    document.querySelectorAll('.primary-button').forEach(btn => {
+      if (btn !== button) btn.disabled = isUploading;
+    });
+  }
+
+  function setLoading(isLoading) {
+    state.loading = isLoading;
+    els.loadingCover.classList.toggle('is-visible', isLoading);
+    els.refreshButton.disabled = isLoading;
+  }
+
+  function setSaveState(tradeId, text) {
+    document.querySelectorAll(`[data-save-state="${cssEscape(tradeId)}"]`).forEach(el => {
+      el.textContent = text;
+    });
+  }
+
+  function showToast(message, isError) {
+    clearTimeout(showToast.timer);
+    els.toast.textContent = message;
+    els.toast.classList.toggle('is-error', Boolean(isError));
+    els.toast.classList.add('is-visible');
+    showToast.timer = setTimeout(() => {
+      els.toast.classList.remove('is-visible');
+      els.toast.classList.remove('is-error');
+    }, isError ? 3600 : 2200);
+  }
+
+  function mergeTrade(trade) {
+    if (!trade || !trade.trade_id) return;
+    const apply = (item) => item.trade_id === trade.trade_id ? Object.assign({}, item, trade) : item;
+    state.waitingTrades = state.waitingTrades.map(apply);
+    state.historyTrades = state.historyTrades.map(apply);
+    if (state.currentTrade && state.currentTrade.trade_id === trade.trade_id) {
+      state.currentTrade = Object.assign({}, state.currentTrade, trade);
+    }
+  }
+
+  function normalizeList(value) {
+    if (!value) return [];
+    const list = Array.isArray(value) ? value : value.trades || value.items || [];
+    return list.map(normalizeTrade).filter(item => item.trade_id);
+  }
+
+  function normalizeTrade(trade) {
+    const item = trade || {};
+    return {
+      trade_id: text(item.trade_id || item.tradeId),
+      status: text(item.status || 'waiting'),
+      entry_saved_at: item.entry_saved_at || item.entrySavedAt || '',
+      entry_saved_at_timestamp: Number(item.entry_saved_at_timestamp || item.entrySavedAtTimestamp || 0),
+      result_saved_at: item.result_saved_at || item.resultSavedAt || '',
+      result_saved_at_timestamp: Number(item.result_saved_at_timestamp || item.resultSavedAtTimestamp || 0),
+      duration_minutes: item.duration_minutes ?? item.durationMinutes ?? '',
+      entry_image_url: text(item.entry_image_url || item.entryImageUrl),
+      result_image_url: text(item.result_image_url || item.resultImageUrl),
+      memo: text(item.memo),
+      limit_value: text(item.limit_value ?? item.limitValue),
+      stop_value: text(item.stop_value ?? item.stopValue),
+      expected_reach_time: text(item.expected_reach_time ?? item.expectedReachTime),
+      created_date: item.created_date || item.createdDate || '',
+      day_of_week: text(item.day_of_week || item.dayOfWeek),
+      entry_image_file_id: text(item.entry_image_file_id || item.entryImageFileId),
+      result_image_file_id: text(item.result_image_file_id || item.resultImageFileId),
+      entry_image_filename: text(item.entry_image_filename || item.entryImageFilename),
+      result_image_filename: text(item.result_image_filename || item.resultImageFilename),
+      updated_at: item.updated_at || item.updatedAt || '',
+      updated_at_timestamp: Number(item.updated_at_timestamp || item.updatedAtTimestamp || 0)
+    };
+  }
+
+  function sortTrades(trades) {
+    return trades.slice().sort((a, b) => {
+      const aTime = a.entry_saved_at_timestamp || toTime(a.entry_saved_at);
+      const bTime = b.entry_saved_at_timestamp || toTime(b.entry_saved_at);
+      return bTime - aTime;
+    });
+  }
+
+  function groupByDate(trades) {
+    return trades.reduce((groups, trade) => {
+      const key = formatDate(trade.created_date || trade.entry_saved_at);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(trade);
+      return groups;
+    }, {});
+  }
+
+  function createImage(url, alt) {
+    if (url) {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = alt;
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      return img;
+    }
+    const placeholder = document.createElement('div');
+    placeholder.className = 'image-placeholder';
+    placeholder.textContent = '画像なし';
+    return placeholder;
+  }
+
+  function createMiniPill(textValue) {
+    const pill = document.createElement('span');
+    pill.className = 'mini-pill';
+    pill.textContent = textValue;
+    return pill;
+  }
+
+  function getImageCount(trade) {
+    return (trade.entry_image_url ? 1 : 0) + (trade.result_image_url ? 1 : 0);
+  }
+
+  function toStatusLabel(status) {
+    return status === 'completed' ? '完了' : '結果待ち';
+  }
+
+  function formatDate(value) {
+    const date = parseDate(value);
+    if (!date) return '-';
+    return new Intl.DateTimeFormat('ja-JP', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(date);
+  }
+
+  function formatTime(value) {
+    const date = parseDate(value);
+    if (!date) return '--:--';
+    return new Intl.DateTimeFormat('ja-JP', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(date);
+  }
+
+  function formatDateTime(value) {
+    const date = parseDate(value);
+    if (!date) return '-';
+    return `${formatDate(date)} ${formatTime(date)}`;
+  }
+
+  function formatDuration(value) {
+    if (value === '' || value === null || typeof value === 'undefined') return '-';
+    const minutes = Number(value);
+    if (!Number.isFinite(minutes)) return `${value}`;
+    if (minutes < 60) return `${minutes}分`;
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return rest ? `${hours}時間${rest}分` : `${hours}時間`;
+  }
+
+  function parseDate(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === 'number') return new Date(value);
+    const raw = String(value).trim();
+    const localMatch = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (localMatch) {
+      return new Date(
+        Number(localMatch[1]),
+        Number(localMatch[2]) - 1,
+        Number(localMatch[3]),
+        Number(localMatch[4] || 0),
+        Number(localMatch[5] || 0),
+        Number(localMatch[6] || 0)
+      );
+    }
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function toTime(value) {
+    const date = parseDate(value);
+    return date ? date.getTime() : 0;
+  }
+
+  function text(value) {
+    return value === null || typeof value === 'undefined' ? '' : String(value);
+  }
+
+  function getErrorMessage(error, fallback) {
+    if (!error) return fallback;
+    if (typeof error === 'string') return error || fallback;
+    return error.message || fallback;
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && CSS.escape) return CSS.escape(value);
+    return String(value).replace(/["\\]/g, '\\$&');
+  }
+})();
+</script>

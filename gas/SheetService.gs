@@ -69,6 +69,11 @@ function setTextFormats(sheet) {
   if (map.duration_minutes) {
     sheet.getRange(2, map.duration_minutes, maxRows, 1).setNumberFormat('0');
   }
+  ['entry_image_count', 'result_image_count'].forEach(function(header) {
+    if (map[header]) {
+      sheet.getRange(2, map[header], maxRows, 1).setNumberFormat('0');
+    }
+  });
 }
 
 function appendTradeRow(trade) {
@@ -171,6 +176,14 @@ function mapRowToTrade(row, map) {
   var entryDate = dateInfo('entry_saved_at');
   var resultDate = dateInfo('result_saved_at');
   var updatedDate = dateInfo('updated_at');
+  var entryImageUrls = parseListColumn_(asText('entry_image_urls'), asText('entry_image_url'));
+  var resultImageUrls = parseListColumn_(asText('result_image_urls'), asText('result_image_url'));
+  var entryImageFileIds = parseListColumn_(asText('entry_image_file_ids'), asText('entry_image_file_id'));
+  var resultImageFileIds = parseListColumn_(asText('result_image_file_ids'), asText('result_image_file_id'));
+  var entryImageFilenames = parseListColumn_(asText('entry_image_filenames'), asText('entry_image_filename'));
+  var resultImageFilenames = parseListColumn_(asText('result_image_filenames'), asText('result_image_filename'));
+  var entryImageCount = getImageCountFromColumns_(get('entry_image_count'), entryImageUrls, entryImageFileIds);
+  var resultImageCount = getImageCountFromColumns_(get('result_image_count'), resultImageUrls, resultImageFileIds);
 
   return {
     trade_id: asText('trade_id'),
@@ -183,24 +196,60 @@ function mapRowToTrade(row, map) {
     result_saved_at_timestamp: resultDate.timestamp,
     result_saved_at_text: resultDate.text,
     duration_minutes: get('duration_minutes') === '' ? '' : Number(get('duration_minutes')),
-    entry_image_url: asText('entry_image_url'),
-    result_image_url: asText('result_image_url'),
+    entry_image_url: entryImageUrls[0] || asText('entry_image_url'),
+    result_image_url: resultImageUrls[0] || asText('result_image_url'),
+    entry_image_urls: entryImageUrls,
+    result_image_urls: resultImageUrls,
     memo: asText('memo'),
     limit_value: asText('limit_value'),
     stop_value: asText('stop_value'),
     expected_reach_time: asText('expected_reach_time'),
     created_date: asText('created_date'),
     day_of_week: asText('day_of_week'),
-    entry_image_file_id: asText('entry_image_file_id'),
-    result_image_file_id: asText('result_image_file_id'),
-    entry_image_filename: asText('entry_image_filename'),
-    result_image_filename: asText('result_image_filename'),
+    entry_image_file_id: entryImageFileIds[0] || asText('entry_image_file_id'),
+    result_image_file_id: resultImageFileIds[0] || asText('result_image_file_id'),
+    entry_image_file_ids: entryImageFileIds,
+    result_image_file_ids: resultImageFileIds,
+    entry_image_filename: entryImageFilenames[0] || asText('entry_image_filename'),
+    result_image_filename: resultImageFilenames[0] || asText('result_image_filename'),
+    entry_image_filenames: entryImageFilenames,
+    result_image_filenames: resultImageFilenames,
+    entry_image_count: entryImageCount,
+    result_image_count: resultImageCount,
     updated_at: updatedDate.value,
     updated_at_timestamp: updatedDate.timestamp,
     updated_at_text: updatedDate.text,
     has_memo: asText('memo').length > 0,
-    image_count: asText('result_image_file_id') ? 2 : 1
+    image_count: entryImageCount + resultImageCount
   };
+}
+
+function parseListColumn_(serialized, fallback) {
+  var textValue = String(serialized || '').trim();
+  if (!textValue) {
+    return fallback ? [String(fallback)] : [];
+  }
+  try {
+    var parsed = JSON.parse(textValue);
+    if (Array.isArray(parsed)) {
+      return parsed.filter(function(value) {
+        return value !== null && typeof value !== 'undefined' && String(value) !== '';
+      }).map(function(value) {
+        return String(value);
+      });
+    }
+  } catch (e) {
+    // 旧データや手入力があっても、表示側では1件として扱えるようにする。
+  }
+  return [textValue];
+}
+
+function getImageCountFromColumns_(countValue, urls, fileIds) {
+  var count = Number(countValue);
+  if (Number.isFinite(count) && count > 0) {
+    return count;
+  }
+  return Math.max((urls || []).length, (fileIds || []).length);
 }
 
 function buildRowValues_(map, trade, columnCount) {

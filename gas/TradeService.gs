@@ -2,32 +2,41 @@ function createEntryTrade(payload) {
   return withDocumentLock_(function() {
     var savedAt = now_();
     var tradeId = generateTradeId(savedAt);
-    var image = saveEntryImage(tradeId, payload, savedAt);
+    var images = saveEntryImages(tradeId, payload, savedAt);
 
     try {
+      var entryImageColumns = buildImageColumns_('entry', images);
       var trade = {
         trade_id: tradeId,
         status: STATUS_WAITING,
         entry_saved_at: savedAt,
         result_saved_at: '',
         duration_minutes: '',
-        entry_image_url: image.url,
+        entry_image_url: entryImageColumns.entry_image_url,
         result_image_url: '',
+        entry_image_urls: entryImageColumns.entry_image_urls,
+        result_image_urls: '',
         memo: '',
         limit_value: '',
         stop_value: '',
         expected_reach_time: '',
         created_date: formatDate(savedAt, 'yyyy/MM/dd'),
         day_of_week: getDayOfWeek(savedAt),
-        entry_image_file_id: image.fileId,
+        entry_image_file_id: entryImageColumns.entry_image_file_id,
         result_image_file_id: '',
-        entry_image_filename: image.fileName,
+        entry_image_file_ids: entryImageColumns.entry_image_file_ids,
+        result_image_file_ids: '',
+        entry_image_filename: entryImageColumns.entry_image_filename,
         result_image_filename: '',
+        entry_image_filenames: entryImageColumns.entry_image_filenames,
+        result_image_filenames: '',
+        entry_image_count: entryImageColumns.entry_image_count,
+        result_image_count: 0,
         updated_at: savedAt
       };
       return appendTradeRow(trade);
     } catch (e) {
-      trashDriveFileQuietly_(image.fileId);
+      trashDriveFilesQuietly_(images);
       throw e;
     }
   });
@@ -83,19 +92,24 @@ function completeTrade(payload) {
     }
 
     var savedAt = now_();
-    var image = saveResultImage(tradeId, payload, savedAt);
+    var images = saveResultImages(tradeId, payload, savedAt);
     try {
+      var resultImageColumns = buildImageColumns_('result', images);
       return updateTradeRow(found.rowIndex, {
         status: STATUS_COMPLETED,
         result_saved_at: savedAt,
         duration_minutes: calculateDurationMinutes(found.trade.entry_saved_at, savedAt),
-        result_image_url: image.url,
-        result_image_file_id: image.fileId,
-        result_image_filename: image.fileName,
+        result_image_url: resultImageColumns.result_image_url,
+        result_image_urls: resultImageColumns.result_image_urls,
+        result_image_file_id: resultImageColumns.result_image_file_id,
+        result_image_file_ids: resultImageColumns.result_image_file_ids,
+        result_image_filename: resultImageColumns.result_image_filename,
+        result_image_filenames: resultImageColumns.result_image_filenames,
+        result_image_count: resultImageColumns.result_image_count,
         updated_at: savedAt
       });
     } catch (e) {
-      trashDriveFileQuietly_(image.fileId);
+      trashDriveFilesQuietly_(images);
       throw e;
     }
   });
@@ -119,4 +133,26 @@ function getTradeById(tradeId) {
     throw new Error('対象の記録が見つかりません。');
   }
   return found.trade;
+}
+
+function buildImageColumns_(kind, images) {
+  images = images || [];
+  var urls = images.map(function(image) {
+    return image.url;
+  });
+  var fileIds = images.map(function(image) {
+    return image.fileId;
+  });
+  var fileNames = images.map(function(image) {
+    return image.fileName;
+  });
+  var columns = {};
+  columns[kind + '_image_url'] = urls[0] || '';
+  columns[kind + '_image_urls'] = serializeList_(urls);
+  columns[kind + '_image_file_id'] = fileIds[0] || '';
+  columns[kind + '_image_file_ids'] = serializeList_(fileIds);
+  columns[kind + '_image_filename'] = fileNames[0] || '';
+  columns[kind + '_image_filenames'] = serializeList_(fileNames);
+  columns[kind + '_image_count'] = images.length;
+  return columns;
 }

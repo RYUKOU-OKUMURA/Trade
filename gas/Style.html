@@ -246,6 +246,7 @@
   }
 
   .thumb {
+    position: relative;
     width: 92px;
     aspect-ratio: 1 / 1;
     overflow: hidden;
@@ -411,6 +412,7 @@
   }
 
   .history-thumb {
+    position: relative;
     width: 54px;
     aspect-ratio: 1 / 1;
     overflow: hidden;
@@ -452,7 +454,13 @@
     padding: 12px;
   }
 
+  .image-gallery {
+    display: grid;
+    gap: 10px;
+  }
+
   .detail-image {
+    position: relative;
     width: 100%;
     overflow: hidden;
     border-radius: var(--radius);
@@ -465,6 +473,32 @@
 
   .detail-image.result {
     aspect-ratio: 4 / 3;
+  }
+
+  .thumb-count,
+  .image-index {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    display: inline-flex;
+    min-height: 24px;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: rgba(22, 32, 28, 0.82);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 900;
+    line-height: 1;
+  }
+
+  .history-thumb .thumb-count {
+    right: 4px;
+    bottom: 4px;
+    min-height: 20px;
+    padding: 2px 5px;
+    font-size: 10px;
   }
 
   .detail-facts {

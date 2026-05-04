@@ -119,6 +119,31 @@ function validateImagePayload(payload) {
   };
 }
 
+function validateImagePayloads(payload) {
+  payload = payload || {};
+  var images = Array.isArray(payload.images) ? payload.images : null;
+  if (!images) {
+    images = payload.imageBase64 ? [payload] : [];
+  }
+  if (!images.length) {
+    throw new Error('画像を選択してください。');
+  }
+  if (images.length > MAX_IMAGES_PER_TRADE) {
+    throw new Error('画像は1回につき' + MAX_IMAGES_PER_TRADE + '枚まで選択できます。');
+  }
+  return images.map(function(imagePayload) {
+    return validateImagePayload(imagePayload);
+  });
+}
+
+function serializeList_(values) {
+  return JSON.stringify((values || []).filter(function(value) {
+    return value !== null && typeof value !== 'undefined' && String(value) !== '';
+  }).map(function(value) {
+    return String(value);
+  }));
+}
+
 function withDocumentLock_(callback) {
   var lock = LockService.getScriptLock();
   lock.waitLock(LOCK_WAIT_MS);

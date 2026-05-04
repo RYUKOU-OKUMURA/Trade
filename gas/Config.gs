@@ -2,10 +2,10 @@ var APP_NAME = 'Trade';
 var TIMEZONE = 'Asia/Tokyo';
 
 // GASエディタへ貼り付け後、実際のIDに差し替えてください。
-var SPREADSHEET_ID = 'PASTE_TRADE_DB_SPREADSHEET_ID_HERE';
+var SPREADSHEET_ID = '1lL_FyDxjWXLQFP-gmw-QLLqYXP0ZUSZVCGBeJf-cwPE';
 var TRADES_SHEET_NAME = 'trades';
-var ENTRY_FOLDER_ID = 'PASTE_ENTRY_FOLDER_ID_HERE';
-var RESULT_FOLDER_ID = 'PASTE_RESULT_FOLDER_ID_HERE';
+var ENTRY_FOLDER_ID = '1Nr6XUWc4VBH_qMLfvstwOC_I9OdUN1ZV';
+var RESULT_FOLDER_ID = '1Nr6XUWc4VBH_qMLfvstwOC_I9OdUN1ZV';
 
 var STATUS_WAITING = 'waiting';
 var STATUS_COMPLETED = 'completed';
@@ -14,6 +14,7 @@ var AUTO_SAVE_DELAY_MS = 1000;
 var MAX_HISTORY_ITEMS = 300;
 var MAX_ENTRY_FIELD_LENGTH = 32;
 var MAX_MEMO_LENGTH = 1000;
+var MAX_IMAGES_PER_TRADE = 6;
 var LOCK_WAIT_MS = 30000;
 
 var ALLOWED_MIME_TYPES = [
@@ -32,6 +33,8 @@ var TRADE_HEADERS = [
   'duration_minutes',
   'entry_image_url',
   'result_image_url',
+  'entry_image_urls',
+  'result_image_urls',
   'memo',
   'limit_value',
   'stop_value',
@@ -40,8 +43,14 @@ var TRADE_HEADERS = [
   'day_of_week',
   'entry_image_file_id',
   'result_image_file_id',
+  'entry_image_file_ids',
+  'result_image_file_ids',
   'entry_image_filename',
   'result_image_filename',
+  'entry_image_filenames',
+  'result_image_filenames',
+  'entry_image_count',
+  'result_image_count',
   'updated_at'
 ];
 
@@ -50,6 +59,8 @@ var TEXT_COLUMNS = [
   'status',
   'entry_image_url',
   'result_image_url',
+  'entry_image_urls',
+  'result_image_urls',
   'memo',
   'limit_value',
   'stop_value',
@@ -58,8 +69,12 @@ var TEXT_COLUMNS = [
   'day_of_week',
   'entry_image_file_id',
   'result_image_file_id',
+  'entry_image_file_ids',
+  'result_image_file_ids',
   'entry_image_filename',
-  'result_image_filename'
+  'result_image_filename',
+  'entry_image_filenames',
+  'result_image_filenames'
 ];
 
 var DATETIME_COLUMNS = [

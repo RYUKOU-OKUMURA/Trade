@@ -6,6 +6,7 @@
   const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
   const ENTRY_FIELD_PATTERN = /^[A-Za-z0-9.:_\-/+ ]{0,32}$/;
   const MAX_MEMO_LENGTH = 1000;
+  const MAX_IMAGES_PER_TRADE = 6;
 
   const state = {
     view: 'home',
@@ -17,6 +18,9 @@
     uploading: false,
     loading: false
   };
+
+  const DEFAULT_ENTRY_BUTTON_LABEL = 'エントリー画像を保存';
+  const DEFAULT_RESULT_BUTTON_LABEL = '結果画像を保存';
 
   const els = {};
 
@@ -86,10 +90,10 @@
     });
 
     els.entryFileInput.addEventListener('change', async (event) => {
-      const file = event.target.files && event.target.files[0];
+      const files = getSelectedFiles(event.target.files);
       event.target.value = '';
-      if (!file) return;
-      await uploadEntryImage(file);
+      if (!files.length) return;
+      await uploadEntryImages(files);
     });
   }
 
@@ -135,33 +139,33 @@
     }
   }
 
-  async function uploadEntryImage(file) {
-    if (!validateImageFile(file)) return;
-    setUploading(true, els.entryUploadButton, '保存中...');
-    showToast('画像を保存中...');
+  async function uploadEntryImages(files) {
+    if (!validateImageFiles(files)) return;
+    setUploading(true, els.entryUploadButton, `保存中... (${files.length}枚)`);
+    showToast(`${files.length}枚の画像を保存中...`);
     try {
-      const image = await readImageAsBase64(file);
-      const trade = await runGas('createEntryTrade', image);
+      const payload = await readImagesAsBase64(files);
+      const trade = await runGas('createEntryTrade', payload);
       const normalized = normalizeTrade(trade);
-      showToast('エントリー画像を保存しました');
+      showToast(`エントリー画像${files.length}枚を保存しました`);
       state.waitingTrades = [normalized].concat(state.waitingTrades.filter(item => item.trade_id !== normalized.trade_id));
       renderWaitingTrades();
     } catch (error) {
       showToast(getErrorMessage(error, '画像の保存に失敗しました'), true);
     } finally {
-      setUploading(false, els.entryUploadButton, 'エントリー画像を保存');
+      setUploading(false, els.entryUploadButton, DEFAULT_ENTRY_BUTTON_LABEL);
     }
   }
 
-  async function uploadResultImage(tradeId, file, button) {
-    if (!tradeId || !validateImageFile(file)) return;
-    setUploading(true, button, '保存中...');
-    showToast('結果画像を保存中...');
+  async function uploadResultImages(tradeId, files, button) {
+    if (!tradeId || !validateImageFiles(files)) return;
+    setUploading(true, button, `保存中... (${files.length}枚)`);
+    showToast(`${files.length}枚の結果画像を保存中...`);
     try {
-      const image = await readImageAsBase64(file);
-      const trade = await runGas('completeTrade', Object.assign({ tradeId }, image));
+      const payload = await readImagesAsBase64(files);
+      const trade = await runGas('completeTrade', Object.assign({ tradeId }, payload));
       const normalized = normalizeTrade(trade);
-      showToast('結果画像を保存しました');
+      showToast(`結果画像${files.length}枚を保存しました`);
       state.waitingTrades = state.waitingTrades.filter(item => item.trade_id !== tradeId);
       renderWaitingTrades();
       if (state.view === 'detail') {
@@ -171,7 +175,7 @@
     } catch (error) {
       showToast(getErrorMessage(error, '画像の保存に失敗しました'), true);
     } finally {
-      setUploading(false, button, '結果画像を保存');
+      setUploading(false, button, DEFAULT_RESULT_BUTTON_LABEL);
     }
   }
 
@@ -197,7 +201,8 @@
     thumb.className = 'thumb';
     thumb.type = 'button';
     thumb.setAttribute('aria-label', '詳細を見る');
-    thumb.appendChild(createImage(trade.entry_image_url, 'エントリー画像'));
+    thumb.appendChild(createImage(getFirstImageUrl(trade, 'entry'), 'エントリー画像'));
+    addImageCountBadge(thumb, getImageCount(trade));
     thumb.addEventListener('click', () => loadDetail(trade.trade_id, sourceView));
 
     const summary = document.createElement('div');
@@ -231,15 +236,16 @@
     resultInput.className = 'file-input';
     resultInput.type = 'file';
     resultInput.accept = 'image/jpeg,image/png,image/webp';
+    resultInput.multiple = true;
     resultButton.addEventListener('click', () => {
       if (state.uploading) return;
       resultInput.click();
     });
     resultInput.addEventListener('change', async (event) => {
-      const file = event.target.files && event.target.files[0];
+      const files = getSelectedFiles(event.target.files);
       event.target.value = '';
-      if (!file) return;
-      await uploadResultImage(trade.trade_id, file, resultButton);
+      if (!files.length) return;
+      await uploadResultImages(trade.trade_id, files, resultButton);
     });
 
     actions.append(detailButton, resultButton, resultInput);
@@ -437,7 +443,8 @@
 
     const thumb = document.createElement('div');
     thumb.className = 'history-thumb';
-    thumb.appendChild(createImage(trade.entry_image_url, 'エントリー画像'));
+    thumb.appendChild(createImage(getFirstImageUrl(trade, 'entry'), 'エントリー画像'));
+    addImageCountBadge(thumb, getImageCount(trade));
 
     const main = document.createElement('div');
     main.className = 'history-main';
@@ -474,10 +481,7 @@
 
     panel.appendChild(createSectionLabel(`${formatDateTime(trade.entry_saved_at)} のエントリー`));
 
-    const entryImage = document.createElement('div');
-    entryImage.className = 'detail-image entry';
-    entryImage.appendChild(createImage(trade.entry_image_url, 'エントリー画像'));
-    panel.appendChild(entryImage);
+    panel.appendChild(createImageGallery(getImageUrls(trade, 'entry'), 'エントリー画像', 'entry'));
 
     const facts = document.createElement('dl');
     facts.className = 'detail-facts';
@@ -491,11 +495,8 @@
     panel.appendChild(createEditableFields(trade, 'detail'));
 
     panel.appendChild(createSectionLabel('結果画像'));
-    if (trade.result_image_url) {
-      const resultImage = document.createElement('div');
-      resultImage.className = 'detail-image result';
-      resultImage.appendChild(createImage(trade.result_image_url, '結果画像'));
-      panel.appendChild(resultImage);
+    if (getImageUrls(trade, 'result').length) {
+      panel.appendChild(createImageGallery(getImageUrls(trade, 'result'), '結果画像', 'result'));
     } else {
       const waiting = document.createElement('div');
       waiting.className = 'empty-state';
@@ -510,15 +511,16 @@
       resultInput.className = 'file-input';
       resultInput.type = 'file';
       resultInput.accept = 'image/jpeg,image/png,image/webp';
+      resultInput.multiple = true;
       resultButton.addEventListener('click', () => {
         if (state.uploading) return;
         resultInput.click();
       });
       resultInput.addEventListener('change', async (event) => {
-        const file = event.target.files && event.target.files[0];
+        const files = getSelectedFiles(event.target.files);
         event.target.value = '';
-        if (!file) return;
-        await uploadResultImage(trade.trade_id, file, resultButton);
+        if (!files.length) return;
+        await uploadResultImages(trade.trade_id, files, resultButton);
       });
       panel.append(resultButton, resultInput);
     }
@@ -571,6 +573,15 @@
     });
   }
 
+  function getSelectedFiles(fileList) {
+    return Array.from(fileList || []);
+  }
+
+  async function readImagesAsBase64(files) {
+    const images = await Promise.all(files.map(readImageAsBase64));
+    return { images };
+  }
+
   function readImageAsBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -588,12 +599,17 @@
     });
   }
 
-  function validateImageFile(file) {
-    if (!file) {
+  function validateImageFiles(files) {
+    if (!files || !files.length) {
       showToast('画像を選択してください', true);
       return false;
     }
-    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+    if (files.length > MAX_IMAGES_PER_TRADE) {
+      showToast(`画像は1回につき${MAX_IMAGES_PER_TRADE}枚まで選択できます`, true);
+      return false;
+    }
+    const unsupported = files.find(file => !ALLOWED_MIME_TYPES.includes(file.type));
+    if (unsupported) {
       showToast('この画像形式は対応していません', true);
       return false;
     }
@@ -653,6 +669,12 @@
 
   function normalizeTrade(trade) {
     const item = trade || {};
+    const entryImageUrls = normalizeImageList(item.entry_image_urls ?? item.entryImageUrls, item.entry_image_url || item.entryImageUrl);
+    const resultImageUrls = normalizeImageList(item.result_image_urls ?? item.resultImageUrls, item.result_image_url || item.resultImageUrl);
+    const entryImageFileIds = normalizeImageList(item.entry_image_file_ids ?? item.entryImageFileIds, item.entry_image_file_id || item.entryImageFileId);
+    const resultImageFileIds = normalizeImageList(item.result_image_file_ids ?? item.resultImageFileIds, item.result_image_file_id || item.resultImageFileId);
+    const entryImageFilenames = normalizeImageList(item.entry_image_filenames ?? item.entryImageFilenames, item.entry_image_filename || item.entryImageFilename);
+    const resultImageFilenames = normalizeImageList(item.result_image_filenames ?? item.resultImageFilenames, item.result_image_filename || item.resultImageFilename);
     return {
       trade_id: text(item.trade_id || item.tradeId),
       status: text(item.status || 'waiting'),
@@ -661,21 +683,47 @@
       result_saved_at: item.result_saved_at || item.resultSavedAt || '',
       result_saved_at_timestamp: Number(item.result_saved_at_timestamp || item.resultSavedAtTimestamp || 0),
       duration_minutes: item.duration_minutes ?? item.durationMinutes ?? '',
-      entry_image_url: text(item.entry_image_url || item.entryImageUrl),
-      result_image_url: text(item.result_image_url || item.resultImageUrl),
+      entry_image_url: entryImageUrls[0] || '',
+      result_image_url: resultImageUrls[0] || '',
+      entry_image_urls: entryImageUrls,
+      result_image_urls: resultImageUrls,
       memo: text(item.memo),
       limit_value: text(item.limit_value ?? item.limitValue),
       stop_value: text(item.stop_value ?? item.stopValue),
       expected_reach_time: text(item.expected_reach_time ?? item.expectedReachTime),
       created_date: item.created_date || item.createdDate || '',
       day_of_week: text(item.day_of_week || item.dayOfWeek),
-      entry_image_file_id: text(item.entry_image_file_id || item.entryImageFileId),
-      result_image_file_id: text(item.result_image_file_id || item.resultImageFileId),
-      entry_image_filename: text(item.entry_image_filename || item.entryImageFilename),
-      result_image_filename: text(item.result_image_filename || item.resultImageFilename),
+      entry_image_file_id: entryImageFileIds[0] || '',
+      result_image_file_id: resultImageFileIds[0] || '',
+      entry_image_file_ids: entryImageFileIds,
+      result_image_file_ids: resultImageFileIds,
+      entry_image_filename: entryImageFilenames[0] || '',
+      result_image_filename: resultImageFilenames[0] || '',
+      entry_image_filenames: entryImageFilenames,
+      result_image_filenames: resultImageFilenames,
+      entry_image_count: Number(item.entry_image_count ?? item.entryImageCount ?? entryImageUrls.length),
+      result_image_count: Number(item.result_image_count ?? item.resultImageCount ?? resultImageUrls.length),
       updated_at: item.updated_at || item.updatedAt || '',
       updated_at_timestamp: Number(item.updated_at_timestamp || item.updatedAtTimestamp || 0)
     };
+  }
+
+  function normalizeImageList(value, fallback) {
+    let list = [];
+    if (Array.isArray(value)) {
+      list = value;
+    } else if (typeof value === 'string' && value.trim()) {
+      try {
+        const parsed = JSON.parse(value);
+        list = Array.isArray(parsed) ? parsed : [value];
+      } catch (error) {
+        list = [value];
+      }
+    }
+    if (!list.length && fallback) {
+      list = [fallback];
+    }
+    return list.map(text).map(item => item.trim()).filter(Boolean);
   }
 
   function sortTrades(trades) {
@@ -710,6 +758,40 @@
     return placeholder;
   }
 
+  function createImageGallery(urls, altPrefix, kind) {
+    const gallery = document.createElement('div');
+    gallery.className = `image-gallery ${kind}`;
+    if (!urls.length) {
+      const frame = document.createElement('div');
+      frame.className = `detail-image ${kind}`;
+      frame.appendChild(createImage('', altPrefix));
+      gallery.appendChild(frame);
+      return gallery;
+    }
+
+    urls.forEach((url, index) => {
+      const frame = document.createElement('div');
+      frame.className = `detail-image ${kind}`;
+      frame.appendChild(createImage(url, `${altPrefix}${index + 1}`));
+      if (urls.length > 1) {
+        const badge = document.createElement('span');
+        badge.className = 'image-index';
+        badge.textContent = `${index + 1}/${urls.length}`;
+        frame.appendChild(badge);
+      }
+      gallery.appendChild(frame);
+    });
+    return gallery;
+  }
+
+  function addImageCountBadge(container, count) {
+    if (count <= 1) return;
+    const badge = document.createElement('span');
+    badge.className = 'thumb-count';
+    badge.textContent = `${count}枚`;
+    container.appendChild(badge);
+  }
+
   function createMiniPill(textValue) {
     const pill = document.createElement('span');
     pill.className = 'mini-pill';
@@ -718,7 +800,17 @@
   }
 
   function getImageCount(trade) {
-    return (trade.entry_image_url ? 1 : 0) + (trade.result_image_url ? 1 : 0);
+    return getImageUrls(trade, 'entry').length + getImageUrls(trade, 'result').length;
+  }
+
+  function getImageUrls(trade, kind) {
+    const list = kind === 'result' ? trade.result_image_urls : trade.entry_image_urls;
+    const single = kind === 'result' ? trade.result_image_url : trade.entry_image_url;
+    return normalizeImageList(list, single);
+  }
+
+  function getFirstImageUrl(trade, kind) {
+    return getImageUrls(trade, kind)[0] || '';
   }
 
   function toStatusLabel(status) {

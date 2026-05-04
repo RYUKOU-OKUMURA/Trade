@@ -19,6 +19,7 @@ function getAppConfig() {
     autoSaveDelayMs: AUTO_SAVE_DELAY_MS,
     maxEntryFieldLength: MAX_ENTRY_FIELD_LENGTH,
     maxMemoLength: MAX_MEMO_LENGTH,
+    maxImagesPerTrade: MAX_IMAGES_PER_TRADE,
     allowedMimeTypes: ALLOWED_MIME_TYPES
   };
 }

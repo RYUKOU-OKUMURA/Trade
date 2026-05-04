@@ -29,6 +29,8 @@ result_saved_at
 duration_minutes
 entry_image_url
 result_image_url
+entry_image_urls
+result_image_urls
 memo
 limit_value
 stop_value
@@ -37,14 +39,20 @@ created_date
 day_of_week
 entry_image_file_id
 result_image_file_id
+entry_image_file_ids
+result_image_file_ids
 entry_image_filename
 result_image_filename
+entry_image_filenames
+result_image_filenames
+entry_image_count
+result_image_count
 updated_at
 ```
 
-4. `limit_value`、`stop_value`、`expected_reach_time` はプレーンテキスト形式にします。
+4. `limit_value`、`stop_value`、`expected_reach_time`、`entry_image_urls`、`result_image_urls`、`entry_image_file_ids`、`result_image_file_ids`、`entry_image_filenames`、`result_image_filenames` はプレーンテキスト形式にします。
 5. `entry_saved_at`、`result_saved_at`、`updated_at` は日時形式にします。
-6. `duration_minutes` は数値形式にします。
+6. `duration_minutes`、`entry_image_count`、`result_image_count` は数値形式にします。
 7. スプレッドシートURLからスプレッドシートIDを控えます。
 
 ### 2. Driveフォルダを作成
@@ -105,7 +113,10 @@ claspで同期する場合は、リポジトリ直下の `.clasp.json` が `gas/
 - `DriveService.gs`
   - `saveEntryImage`
   - `saveResultImage`
+  - `saveEntryImages`
+  - `saveResultImages`
   - `createImageFile`
+  - `createImageFiles`
   - `getImageUrl`
 
 - `SheetService.gs`
@@ -142,7 +153,7 @@ claspで同期する場合は、リポジトリ直下の `.clasp.json` が `gas/
   - Toast表示
 
 - `Script.html`
-  - 画像選択
+  - 複数画像選択
   - FileReaderによるbase64変換
   - `google.script.run` 呼び出し
   - 画面切り替え
@@ -173,6 +184,7 @@ var STATUS_COMPLETED = 'completed';
 
 var AUTO_SAVE_DELAY_MS = 1000;
 var MAX_HISTORY_ITEMS = 300;
+var MAX_IMAGES_PER_TRADE = 6;
 
 var ALLOWED_MIME_TYPES = [
   'image/jpeg',
@@ -191,6 +203,8 @@ var ENTRY_FIELD_ALLOWED_PATTERN = /^[A-Za-z0-9.:_\-/+ ]{0,32}$/;
 - DriveフォルダIDはフォルダURL内の `/folders/` 以降の文字列です。
 - `limit_value`、`stop_value`、`expected_reach_time` は数値ではなく文字列として保存します。
 - `154.000` が `154` に変換されないこと、`21:30` が時刻型に変換されないことを確認します。
+- 1エントリーはスプレッドシート上で必ず1行として保存します。複数画像は同じ行の `entry_image_urls` / `result_image_urls` などにJSON配列として保存されます。
+- `entry_image_url` / `result_image_url` は代表サムネイル用の先頭画像です。複数画像の完全な紐付けは `*_urls`、`*_file_ids`、`*_filenames`、`*_image_count` を確認します。
 - 画像URLはアプリ内表示のためDriveサムネイルURLとして保存されます。利用者が画像を表示できない場合は、対象Googleアカウントに画像フォルダの閲覧権限を付与してください。
 
 ## Web Appデプロイ
@@ -209,10 +223,10 @@ var ENTRY_FIELD_ALLOWED_PATTERN = /^[A-Za-z0-9.:_\-/+ ]{0,32}$/;
 ## 基本操作
 
 1. スマホでTradeのWeb App URLを開きます。
-2. 「エントリー画像を保存」を押してチャートスクショを選びます。
+2. 「エントリー画像を保存」を押してチャートスクショを1〜6枚選びます。
 3. 結果待ちカードに、指し値、逆指し値、到達予想時間、メモを入力します。
 4. 入力内容は保存ボタンなしで自動保存されます。
-5. 結果が出たら、該当カードの「結果画像を保存」から結果スクショを選びます。
+5. 結果が出たら、該当カードの「結果画像を保存」から結果スクショを1〜6枚選びます。
 6. 完了した記録はホームから消え、履歴画面で確認できます。
 
 ## テスト
